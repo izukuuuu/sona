@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import csv
 import json as json_module
 import contextlib
 import io
+import re
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from langchain_core.tools import tool
 
+from tools._csv_io import read_csv_rows_all
 from utils.content_text import clean_text_like_keyword_stats
 from utils.path import get_config_path, get_project_root, get_task_process_dir
 from utils.task_context import get_task_id
@@ -28,7 +29,21 @@ CONTENT_COLUMN_KEYWORDS: Tuple[str, ...] = (
     "segment",
 )
 
-DEFAULT_ALLOWED_POS_PREFIXES: Tuple[str, ...] = ("n", "v", "a", "nr", "ns", "nt")
+DEFAULT_ALLOWED_POS_PREFIXES: Tuple[str, ...] = ("n", "v", "a", "nr", "ns", "nt", "eng")
+ENGLISH_TOKEN_BLOCKLIST: Set[str] = {
+    "amp",
+    "br",
+    "cn",
+    "com",
+    "gt",
+    "html",
+    "http",
+    "https",
+    "lt",
+    "nbsp",
+    "quot",
+    "www",
+}
 
 
 @dataclass(frozen=True)
@@ -62,33 +77,6 @@ def _load_stopwords() -> Set[str]:
         return set()
 
 
-def _read_csv_rows(file_path: str) -> List[Dict[str, Any]]:
-    file = Path(file_path)
-    if not file.exists():
-        raise FileNotFoundError(f"数据文件不存在: {file_path}")
-
-    rows: List[Dict[str, Any]] = []
-    encodings_to_try: List[str] = ["utf-8-sig", "utf-8", "gb18030", "gbk"]
-    last_error: Optional[Exception] = None
-    for enc in encodings_to_try:
-        try:
-            with open(file, "r", encoding=enc, errors="strict") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    rows.append(row)
-            break
-        except Exception as e:
-            rows = []
-            last_error = e
-            continue
-    if not rows and last_error is not None:
-        with open(file, "r", encoding="utf-8-sig", errors="replace") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                rows.append(row)
-    return rows
-
-
 def _identify_content_columns(fieldnames: Sequence[str]) -> List[str]:
     """
     自动识别内容列：列名包含 content/contents/内容/正文/摘要/ocr/segment（不区分大小写）。
@@ -120,6 +108,25 @@ def _flatten_text(rows: Sequence[Dict[str, Any]], columns: Sequence[str]) -> str
     return " ".join(parts)
 
 
+def _normalize_keyword_token(word: str, *, stopwords: Set[str], min_len: int) -> str:
+    w = (word or "").strip()
+    if not w:
+        return ""
+    low = w.lower()
+    if low in stopwords or low in ENGLISH_TOKEN_BLOCKLIST:
+        return ""
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", w):
+        if len(w) < max(2, min_len):
+            return ""
+        # 品牌/机构名常以英文出现，统一大写可避免 OPPO/oppo 被拆成不同词。
+        return w.upper()
+    if len(w) < min_len:
+        return ""
+    if w in stopwords:
+        return ""
+    return w
+
+
 def _tokenize_with_jieba(
     text: str,
     *,
@@ -139,12 +146,8 @@ def _tokenize_with_jieba(
     # 进一步兜底：切词时也做同样的 stdout/stderr 重定向。
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         for word, flag in pseg.cut(text):
-            w = (word or "").strip()
+            w = _normalize_keyword_token(str(word or ""), stopwords=stopwords, min_len=min_len)
             if not w:
-                continue
-            if len(w) < min_len:
-                continue
-            if w in stopwords:
                 continue
             if flag and any(str(flag).startswith(prefix) for prefix in allowed_pos_prefixes):
                 tokens.append(w)
@@ -159,12 +162,8 @@ def _tokenize_fallback(
 ) -> Iterable[str]:
     cleaned = clean_text_like_keyword_stats(text)
     for tok in cleaned.split():
-        t = tok.strip()
+        t = _normalize_keyword_token(tok, stopwords=stopwords, min_len=min_len)
         if not t:
-            continue
-        if len(t) < min_len:
-            continue
-        if t in stopwords:
             continue
         yield t
 
@@ -212,7 +211,7 @@ def keyword_stats(
         )
 
     try:
-        rows = _read_csv_rows(dataFilePath)
+        rows = read_csv_rows_all(dataFilePath)
     except Exception as e:
         return json_module.dumps(
             {
@@ -294,4 +293,3 @@ def keyword_stats(
     }
 
     return json_module.dumps(summary_payload, ensure_ascii=False)
-

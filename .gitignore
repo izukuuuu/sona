@@ -60,6 +60,13 @@ secrets/
 *.sublime-project
 *.sublime-workspace
 
+# Cursor / local editor artifacts
+.cursor/plans/
+.cursor/debug*.log
+
+# Local sync snapshots / backups
+.sync_backup/
+
 # Jupyter Notebook
 .ipynb_checkpoints
 *.ipynb
@@ -68,6 +75,9 @@ secrets/
 logs/
 *.log
 *.log.*
+
+# Eval artifacts
+eval_results/
 
 # Sandbox - 任务产出（按任务 ID 隔离）
 sandbox/
@@ -100,3 +110,10 @@ Desktop.ini
 *.bak
 *.swp
 *~
+
+# 本地课程作业与知识库压缩包（不纳入版本库）
+期末报告-智能体修改-作业/
+opinion_analysis_kb.zip
+
+# 舆情知识库目录（体积大、本地维护；已从 Git 索引移除，不再推送到远端）
+opinion_analysis_kb/
