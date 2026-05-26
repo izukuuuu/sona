@@ -383,10 +383,12 @@ export function buildConversationTurns(messages: ChatMessage[]): ConversationTur
         const prev = turns[turns.length - 1];
         if (!(prev?.kind === 'user' && prev.content === content)) {
           turns.push({
-            id: `user-${message.timestamp || index}`,
+            id: message.id || `user-${message.timestamp || index}`,
             kind: 'user',
             content,
             timestamp: userTimestamp,
+            messageId: message.id,
+            messageIndex: index,
           });
         }
       }
@@ -407,11 +409,13 @@ export function buildConversationTurns(messages: ChatMessage[]): ConversationTur
           continue;
         } else {
           turns.push({
-            id: `assistant-${first.timestamp || runStart}`,
+            id: first.id || `assistant-${first.timestamp || runStart}`,
             kind: 'assistant',
             timestamp: parseTimestamp(first, runStart),
             answer: answer || '（无文本回复，请展开 Agent 过程查看工具输出）',
             steps,
+            messageId: first.id,
+            messageIndex: runStart,
           });
         }
       }
@@ -429,11 +433,13 @@ export function buildConversationTurns(messages: ChatMessage[]): ConversationTur
 
     const first = messages[runStart];
     turns.push({
-      id: `assistant-${first.timestamp || runStart}`,
+      id: first.id || `assistant-${first.timestamp || runStart}`,
       kind: 'assistant',
       timestamp: parseTimestamp(first, runStart),
       answer: answer || '（无文本回复，请展开 Agent 过程查看工具输出）',
       steps,
+      messageId: first.id,
+      messageIndex: runStart,
     });
   }
 

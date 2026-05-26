@@ -35,7 +35,7 @@ def _file_url_to_path(value: str) -> str:
     path = unquote(parsed.path or "")
     if parsed.netloc and parsed.netloc.lower() not in ("localhost", ""):
         path = f"//{parsed.netloc}{path}"
-    if re.match(r"^/[A-Za-z]:/", path):
+    if re.match(r"^/[A-Za-z]:[\\/]", path):
         path = path[1:]
     return path.replace("/", os.sep)
 

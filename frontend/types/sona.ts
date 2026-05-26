@@ -41,6 +41,8 @@ export type SessionEnvelope = {
   token_usage?: Record<string, unknown>;
 };
 
+export type SessionMessageEditMode = 'message' | 'turn' | 'branch';
+
 export type TaskEnvelope = {
   task_id: string;
   status: 'queued' | 'running' | 'succeeded' | 'failed';
@@ -59,6 +61,27 @@ export type TaskEnvelope = {
 export type ToolInfo = {
   name: string;
   description: string;
+};
+
+export type SkillInfo = {
+  id: string;
+  name: string;
+  description: string;
+  source: string;
+  enabled: boolean;
+};
+
+export type MemorySettings = {
+  enable_memory: boolean;
+  wiki_style: 'teach' | 'concise';
+  wiki_topk: number;
+  wiki_weibo_aux: boolean;
+  updated_at?: string;
+};
+
+export type MemorySettingsResponse = {
+  settings: MemorySettings;
+  session_prefs: Record<string, unknown>;
 };
 
 export type ComposerCommand = {

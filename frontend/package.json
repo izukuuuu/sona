@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start --hostname 127.0.0.1 --port 3000",
     "lint": "eslint .",
+    "postinstall": "node scripts/patch-lobe-antd-image.mjs",
     "test": "vitest run"
   },
   "dependencies": {
@@ -17,6 +18,7 @@
     "antd": "latest",
     "antd-style": "latest",
     "lucide-react": "latest",
+    "motion": "^12.0.0",
     "next": "latest",
     "react": "latest",
     "react-dom": "latest",

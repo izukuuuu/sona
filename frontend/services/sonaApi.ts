@@ -5,10 +5,14 @@ import type {
   AgentRunEvent,
   AgentRunSseEvent,
   ComposerCommand,
+  MemorySettings,
+  MemorySettingsResponse,
   ModelInfo,
   SessionEnvelope,
+  SessionMessageEditMode,
   StreamEvent,
   TaskEnvelope,
+  SkillInfo,
   ToolInfo,
 } from '@/types/sona';
 
@@ -65,6 +69,21 @@ export const sonaApi = {
     fetch(`${API_ROOT}/v1/chat/sessions/${taskId}`, { method: 'DELETE' })
       .then((response) => parseJson<{ sessions: SessionEnvelope[] }>(response)),
   getSession: (taskId: string) => apiGet<SessionEnvelope>(`/v1/chat/sessions/${taskId}`),
+  updateSessionMessage: (
+    taskId: string,
+    messageId: string,
+    body: { content: string; mode?: SessionMessageEditMode },
+  ) =>
+    fetch(`${API_ROOT}/v1/chat/sessions/${taskId}/messages/${messageId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then((response) => parseJson<SessionEnvelope>(response)),
+  deleteSessionMessage: (taskId: string, messageId: string, mode: SessionMessageEditMode = 'turn') =>
+    fetch(
+      `${API_ROOT}/v1/chat/sessions/${taskId}/messages/${messageId}?mode=${encodeURIComponent(mode)}`,
+      { method: 'DELETE' },
+    ).then((response) => parseJson<SessionEnvelope>(response)),
   createAgentRun: (
     taskId: string,
     body: { query: string; auto_route?: boolean; prefer_existing_data?: boolean; workflow_options?: Record<string, unknown> },
@@ -96,15 +115,32 @@ export const sonaApi = {
       prefer_existing_data: true,
       disable_blocking_prompts: true,
     }),
-  wikiQuery: (query: string, taskId?: string) =>
-    apiPost<{ answer: string; sources?: unknown[] }>('/v1/wiki/query', { query, task_id: taskId, topk: 6, style: 'teach' }),
+  wikiQuery: (query: string, taskId?: string, settings?: Partial<MemorySettings>) =>
+    apiPost<{ answer: string; sources?: unknown[] }>('/v1/wiki/query', {
+      query,
+      task_id: taskId,
+      topk: settings?.wiki_topk ?? 6,
+      style: settings?.wiki_style ?? 'teach',
+      weibo_aux: settings?.wiki_weibo_aux ?? true,
+    }),
   wikiApprove: (selector: string) => apiPost<Record<string, unknown>>('/v1/wiki/approve', { selector }),
   caseSearch: (query: string, taskId?: string) =>
     apiPost<{ answer: string; cases?: unknown[] }>('/v1/cases/search', { query, task_id: taskId }),
   hotRun: (config_path = '') => apiPost<{ status: string; path: string }>('/v1/hot/run', { config_path }),
   models: () => apiGet<{ models: ModelInfo[] }>('/v1/models'),
   tools: () => apiGet<{ tools: ToolInfo[] }>('/v1/tools'),
+  skills: () => apiGet<{ skills: SkillInfo[] }>('/v1/skills'),
   commands: () => apiGet<{ commands: ComposerCommand[] }>('/v1/commands'),
+  memorySettings: (taskId?: string) =>
+    apiGet<MemorySettingsResponse>(
+      `/v1/settings/memory${taskId ? `?task_id=${encodeURIComponent(taskId)}` : ''}`,
+    ),
+  updateMemorySettings: (body: Partial<MemorySettings> & { task_id?: string }) =>
+    fetch(`${API_ROOT}/v1/settings/memory`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then((response) => parseJson<MemorySettingsResponse>(response)),
   monitorList: () => apiGet<{ topics: Record<string, unknown>[] }>('/v1/monitor/topics'),
   monitorDemo: () => apiPost<Record<string, unknown>>('/v1/monitor/demo', {}),
   monitorCreate: (payload: { name: string; domain: string; keywords: string[]; description?: string }) =>

@@ -173,6 +173,60 @@ class SessionManager:
         self.save_session(task_id, session_data)
         return self.load_session(task_id)
 
+    def update_message(
+        self,
+        task_id: str,
+        message_id: str,
+        *,
+        content: str,
+        mode: str = "message",
+    ) -> Optional[Dict[str, Any]]:
+        """Update one canonical message, optionally pruning following branch context."""
+        session_data = self.load_session(task_id)
+        if not session_data:
+            return None
+        messages = session_data.get("messages") if isinstance(session_data.get("messages"), list) else []
+        index = next((i for i, item in enumerate(messages) if item.get("id") == message_id), -1)
+        if index < 0:
+            return None
+
+        next_messages = [dict(item) for item in messages]
+        next_messages[index]["content"] = content
+        next_messages[index]["timestamp"] = datetime.now().isoformat()
+        if mode == "branch":
+            next_messages = next_messages[: index + 1]
+        session_data["messages"] = next_messages
+        self.save_session(task_id, session_data)
+        return self.load_session(task_id)
+
+    def delete_message(self, task_id: str, message_id: str, *, mode: str = "turn") -> Optional[Dict[str, Any]]:
+        """Delete one message or one visible conversation turn."""
+        session_data = self.load_session(task_id)
+        if not session_data:
+            return None
+        messages = session_data.get("messages") if isinstance(session_data.get("messages"), list) else []
+        index = next((i for i, item in enumerate(messages) if item.get("id") == message_id), -1)
+        if index < 0:
+            return None
+
+        if mode == "branch":
+            next_messages = messages[:index]
+        elif mode == "message":
+            next_messages = [item for i, item in enumerate(messages) if i != index]
+        else:
+            end = index + 1
+            if messages[index].get("role") == "user":
+                while end < len(messages) and messages[end].get("role") != "user":
+                    end += 1
+            else:
+                while end < len(messages) and messages[end].get("role") != "user":
+                    end += 1
+            next_messages = messages[:index] + messages[end:]
+
+        session_data["messages"] = next_messages
+        self.save_session(task_id, session_data)
+        return self.load_session(task_id)
+
     def delete_session(self, task_id: str) -> bool:
         """删除会话文件。"""
         session_file = self.stm_dir / f"{task_id}.json"

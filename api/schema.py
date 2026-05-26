@@ -142,6 +142,15 @@ class ChatMessageRequest(BaseModel):
     workflow_options: Dict[str, Any] = Field(default_factory=dict)
 
 
+class SessionMessageUpdateRequest(BaseModel):
+    """Edit one persisted chat message."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    content: str = Field(..., min_length=1)
+    mode: str = Field(default="message", pattern="^(message|turn|branch)$")
+
+
 class AgentRunCreateRequest(BaseModel):
     """Create a web Agent run for a chat session."""
 
@@ -201,6 +210,7 @@ class WikiQueryRequest(BaseModel):
     task_id: Optional[str] = Field(default=None, description="Optional chat session id for persistence.")
     topk: int = Field(default=6, ge=1, le=12)
     style: str = Field(default="teach")
+    weibo_aux: bool = True
 
 
 class WikiApproveRequest(BaseModel):
@@ -272,6 +282,59 @@ class ToolListResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tools: List[ToolInfo] = Field(default_factory=list)
+
+
+class SkillInfo(BaseModel):
+    """Backend skill metadata safe for frontend display."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    name: str
+    description: str = ""
+    source: str = "backend"
+    enabled: bool = True
+
+
+class SkillListResponse(BaseModel):
+    """GET /v1/skills payload."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    skills: List[SkillInfo] = Field(default_factory=list)
+
+
+class MemorySettings(BaseModel):
+    """Persisted memory settings exposed to the frontend."""
+
+    model_config = ConfigDict(extra="allow")
+
+    enable_memory: bool = True
+    wiki_style: str = Field(default="teach", pattern="^(teach|concise)$")
+    wiki_topk: int = Field(default=6, ge=1, le=12)
+    wiki_weibo_aux: bool = True
+    updated_at: str = ""
+
+
+class MemorySettingsUpdateRequest(BaseModel):
+    """Patch memory settings and optionally current session prefs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: Optional[str] = None
+    enable_memory: Optional[bool] = None
+    wiki_style: Optional[str] = Field(default=None, pattern="^(teach|concise)$")
+    wiki_topk: Optional[int] = Field(default=None, ge=1, le=12)
+    wiki_weibo_aux: Optional[bool] = None
+
+
+class MemorySettingsResponse(BaseModel):
+    """GET/PATCH /v1/settings/memory payload."""
+
+    model_config = ConfigDict(extra="allow")
+
+    settings: MemorySettings
+    session_prefs: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ComposerCommand(BaseModel):

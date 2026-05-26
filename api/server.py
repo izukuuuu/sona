@@ -33,10 +33,16 @@ from api.schema import (
     MonitorReportRequest,
     MonitorTopicCreateRequest,
     MonitorTopicListResponse,
+    MemorySettings,
+    MemorySettingsResponse,
+    MemorySettingsUpdateRequest,
     SessionCreateRequest,
     SessionEnvelope,
     SessionListResponse,
+    SessionMessageUpdateRequest,
     SessionUpdateRequest,
+    SkillInfo,
+    SkillListResponse,
     TaskEnvelope,
     TaskListResponse,
     TaskStatus,
@@ -48,8 +54,9 @@ from api.schema import (
     WikiQueryRequest,
 )
 from api.task_store import TaskStore, get_task_store
+from utils.harness_memory import get_session_prefs, normalize_session_pref_patch, set_session_prefs
 from utils.message_utils import messages_from_session_data
-from utils.path import ensure_task_dirs, get_project_root
+from utils.path import ensure_task_dirs, get_memory_dir, get_project_root
 from utils.session_manager import get_session_manager
 
 
@@ -932,6 +939,35 @@ def delete_chat_session(task_id: str, limit: int = 20) -> SessionListResponse:
     return SessionListResponse(sessions=sessions)
 
 
+@v1_router.patch("/chat/sessions/{task_id}/messages/{message_id}", response_model=SessionEnvelope)
+def update_chat_message(
+    task_id: str,
+    message_id: str,
+    body: SessionMessageUpdateRequest,
+) -> SessionEnvelope:
+    """Edit one persisted canonical message."""
+    data = get_session_manager().update_message(
+        task_id,
+        message_id,
+        content=body.content,
+        mode=body.mode,
+    )
+    if data is None:
+        raise HTTPException(status_code=404, detail="Session message not found")
+    return _session_envelope(data)
+
+
+@v1_router.delete("/chat/sessions/{task_id}/messages/{message_id}", response_model=SessionEnvelope)
+def delete_chat_message(task_id: str, message_id: str, mode: str = "turn") -> SessionEnvelope:
+    """Delete one persisted message or visible conversation turn."""
+    if mode not in {"message", "turn", "branch"}:
+        raise HTTPException(status_code=422, detail="mode must be message, turn, or branch")
+    data = get_session_manager().delete_message(task_id, message_id, mode=mode)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Session message not found")
+    return _session_envelope(data)
+
+
 @v1_router.post("/chat/sessions/{task_id}/runs", response_model=AgentRunEnvelope)
 def create_agent_run(task_id: str, body: AgentRunCreateRequest) -> AgentRunEnvelope:
     """Create a canonical web Agent run; stream it from /events."""
@@ -1011,6 +1047,7 @@ def query_wiki(body: WikiQueryRequest) -> Dict[str, Any]:
         body.query,
         topk=body.topk,
         style=body.style,
+        weibo_aux=body.weibo_aux,
         project_root=get_project_root(),
     )
     if body.task_id:
@@ -1106,6 +1143,52 @@ def _extract_tool_description(text: str) -> str:
     return " ".join(text.split())[:600]
 
 
+def _memory_settings_path() -> Path:
+    return get_memory_dir() / "settings.json"
+
+
+def _load_memory_settings() -> Dict[str, Any]:
+    path = _memory_settings_path()
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_memory_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
+    path = _memory_settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    next_settings = dict(settings)
+    next_settings["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    path.write_text(json.dumps(next_settings, ensure_ascii=False, indent=2), encoding="utf-8")
+    return next_settings
+
+
+def _memory_settings_model(data: Dict[str, Any] | None = None) -> MemorySettings:
+    raw = dict(data or {})
+    defaults = {
+        "enable_memory": True,
+        "wiki_style": "teach",
+        "wiki_topk": 6,
+        "wiki_weibo_aux": True,
+        "updated_at": "",
+    }
+    defaults.update({key: value for key, value in raw.items() if value is not None})
+    return MemorySettings.model_validate(defaults)
+
+
+def _session_prefs_for_task(task_id: str | None) -> Dict[str, Any]:
+    if not task_id:
+        return {}
+    data = get_session_manager().load_session(task_id)
+    if data is None:
+        return {}
+    return get_session_prefs(data)
+
+
 COMPOSER_COMMANDS: list[ComposerCommand] = [
     ComposerCommand(
         id="event",
@@ -1180,6 +1263,69 @@ def list_tools() -> ToolListResponse:
         description = str(getattr(tool, "description", "") or getattr(tool, "__doc__", "") or "")
         tools.append(ToolInfo(name=name, description=_extract_tool_description(description)))
     return ToolListResponse(tools=tools)
+
+
+@v1_router.get("/skills", response_model=SkillListResponse)
+def list_skills() -> SkillListResponse:
+    """Return backend skills available to the frontend settings screen."""
+    from agent.reactagent import AGENT_TOOLS, QA_TOOLS
+
+    seen: set[str] = set()
+    skills: list[SkillInfo] = []
+    for source, tool_group in (("agent_tool", AGENT_TOOLS), ("qa_tool", QA_TOOLS)):
+        for tool in tool_group:
+            name = str(getattr(tool, "name", "") or tool).strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            description = str(getattr(tool, "description", "") or getattr(tool, "__doc__", "") or "")
+            skills.append(
+                SkillInfo(
+                    id=name,
+                    name=name,
+                    description=_extract_tool_description(description),
+                    source=source,
+                    enabled=True,
+                )
+            )
+    return SkillListResponse(skills=skills)
+
+
+@v1_router.get("/settings/memory", response_model=MemorySettingsResponse)
+def get_memory_settings(task_id: str | None = None) -> MemorySettingsResponse:
+    """Return persisted memory settings and optional current-session prefs."""
+    return MemorySettingsResponse(
+        settings=_memory_settings_model(_load_memory_settings()),
+        session_prefs=_session_prefs_for_task(task_id),
+    )
+
+
+@v1_router.patch("/settings/memory", response_model=MemorySettingsResponse)
+def update_memory_settings(body: MemorySettingsUpdateRequest) -> MemorySettingsResponse:
+    """Patch memory settings and mirror supported prefs into the selected session."""
+    current = _memory_settings_model(_load_memory_settings()).model_dump()
+    patch = body.model_dump(exclude_unset=True, exclude_none=True)
+    task_id = str(patch.pop("task_id", "") or "").strip()
+    if patch:
+        current.update(patch)
+        current = _save_memory_settings(_memory_settings_model(current).model_dump())
+
+    session_prefs: Dict[str, Any] = {}
+    if task_id and current.get("enable_memory", True):
+        manager = get_session_manager()
+        session_data = manager.load_session(task_id)
+        if session_data is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        pref_patch = normalize_session_pref_patch(current)
+        if pref_patch:
+            session_data = set_session_prefs(session_data, patch=pref_patch)
+            manager.save_session(task_id, session_data)
+            session_prefs = _session_prefs_for_task(task_id)
+
+    return MemorySettingsResponse(
+        settings=_memory_settings_model(current),
+        session_prefs=session_prefs,
+    )
 
 
 @v1_router.get("/monitor/topics", response_model=MonitorTopicListResponse)

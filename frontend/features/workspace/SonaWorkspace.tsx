@@ -2,10 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { App, Button, Dropdown, Segmented, Tag } from 'antd';
+import { App, Button, Dropdown, Segmented, Tag, Tooltip } from 'antd';
 import { LoadingDots, TokenTag } from '@lobehub/ui/chat';
+import type { ChatMessage as LobeChatMessage, OnActionsClick, OnMessageChange } from '@lobehub/ui/chat';
 import { SonaChatComposer } from '@/features/workspace/SonaChatComposer';
 import { SonaChatThread } from '@/features/workspace/SonaChatThread';
+import { SonaMemorySettings } from '@/features/workspace/SonaMemorySettings';
 import { SonaSidebar } from '@/features/workspace/SonaSidebar';
 import {
   applyAgentRunEvent,
@@ -26,11 +28,20 @@ import {
   PanelRight,
   Pencil,
   Play,
+  Puzzle,
   Trash2,
 } from 'lucide-react';
 import { sonaApi, streamAgentRunEvents } from '@/services/sonaApi';
 import { useAppStore } from '@/stores/appStore';
-import type { AgentApprovalAction, ApiHealth, ComposerCommand, ModelInfo, ToolInfo } from '@/types/sona';
+import type {
+  AgentApprovalAction,
+  ApiHealth,
+  ComposerCommand,
+  MemorySettings,
+  ModelInfo,
+  SkillInfo,
+  ToolInfo,
+} from '@/types/sona';
 import type { AgentStep } from '@/types/conversation';
 import { commandInputValue } from '@/features/workspace/sonaToolUi';
 import {
@@ -40,6 +51,7 @@ import {
 } from '@/features/workspace/sessionIdentity';
 
 type UtilityTab = 'tasks' | 'profile' | 'models' | 'tools' | 'monitor';
+type SettingsTab = 'skills' | 'memory';
 
 type ActivityEntry = {
   id: string;
@@ -61,6 +73,32 @@ function taskStatusColor(status: string) {
   if (status === 'failed') return 'error';
   if (status === 'running') return 'processing';
   return 'default';
+}
+
+function numericUsageValue(value: unknown, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : fallback;
+}
+
+function formatTokenCount(value: number) {
+  return Math.round(value).toLocaleString('en-US');
+}
+
+function tokenUsageSummary(tokenUsage?: Record<string, unknown>) {
+  if (!tokenUsage) return undefined;
+  const used = numericUsageValue(tokenUsage.total_tokens);
+  const max = numericUsageValue(
+    tokenUsage.max_tokens ??
+      tokenUsage.context_window ??
+      tokenUsage.max_context_tokens ??
+      tokenUsage.context_limit,
+    200000,
+  );
+  return {
+    max,
+    title: `上下文 ${formatTokenCount(used)} / ${formatTokenCount(max)} tokens`,
+    used,
+  };
 }
 
 function contentFromResult(value: Record<string, unknown>, keys: string[]) {
@@ -109,6 +147,8 @@ export function SonaWorkspace() {
   const [utilityTab, setUtilityTab] = useState<UtilityTab>('tasks');
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [tools, setTools] = useState<ToolInfo[]>([]);
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [memorySettings, setMemorySettings] = useState<MemorySettings | null>(null);
   const [commands, setCommands] = useState<ComposerCommand[]>([]);
   const [monitorResult, setMonitorResult] = useState('');
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
@@ -116,6 +156,8 @@ export function SonaWorkspace() {
   const [searchText, setSearchText] = useState('');
   const [homeMode, setHomeMode] = useState(true);
   const [sidebarExpand, setSidebarExpand] = useState(true);
+  const [settingsMode, setSettingsMode] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('skills');
   const [activeRun, setActiveRun] = useState<{ runId: string; taskId: string } | null>(null);
 
   const chatSession = useChatSession({
@@ -124,6 +166,7 @@ export function SonaWorkspace() {
   });
 
   const reportSrc = activeReportTaskId ? `/api/sona/v1/tasks/${activeReportTaskId}/report` : '';
+  const contextUsage = tokenUsageSummary(activeSession?.token_usage);
 
   const visibleTasks = useMemo(
     () => [...tasks].reverse(),
@@ -256,6 +299,7 @@ export function SonaWorkspace() {
   }
 
   async function selectSession(taskId: string) {
+    setSettingsMode(false);
     abortActiveStream();
     if (taskId === currentTaskId && !homeMode) {
       await chatSession.reloadSession(taskId);
@@ -267,17 +311,58 @@ export function SonaWorkspace() {
   }
 
   function openUtility(tab: UtilityTab) {
+    setSettingsMode(false);
     setUtilityTab(tab);
     setTopicOpen(true);
   }
 
   function openHome() {
+    setSettingsMode(false);
     chatSession.openHome();
     setTopicOpen(false);
     setRouteStatus('待命');
   }
 
+  async function openSettings(tab: SettingsTab = 'skills') {
+    setSettingsMode(true);
+    setSettingsTab(tab);
+    setTopicOpen(false);
+    setRouteStatus('设置');
+    try {
+      const [skillResult, memoryResult] = await Promise.all([
+        sonaApi.skills(),
+        sonaApi.memorySettings(currentTaskId),
+      ]);
+      setSkills(skillResult.skills || []);
+      setMemorySettings(memoryResult.settings);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setApiError(message);
+      messageApi.error(message);
+    }
+  }
+
+  function closeSettings() {
+    setSettingsMode(false);
+    setRouteStatus('待命');
+  }
+
+  async function patchMemorySettings(patch: Partial<MemorySettings>) {
+    try {
+      const result = await sonaApi.updateMemorySettings({
+        ...patch,
+        task_id: currentTaskId || undefined,
+      });
+      setMemorySettings(result.settings);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setApiError(message);
+      messageApi.error(message);
+    }
+  }
+
   async function createNewSession() {
+    setSettingsMode(false);
     await chatSession.createEmptySession();
     setActivityLog([]);
     setRouteStatus('新话题');
@@ -398,7 +483,11 @@ export function SonaWorkspace() {
       setRouteStatus('知识库');
       const session = await chatSession.ensureSession(rest, { forceNew: homeMode });
       addMessage({ role: 'user', content: rest });
-      const result = await sonaApi.wikiQuery(rest, session.task_id);
+      const result = await sonaApi.wikiQuery(
+        rest,
+        session.task_id,
+        memorySettings?.enable_memory ? memorySettings : undefined,
+      );
       addMessage({ role: 'assistant', content: result.answer || '未返回回答' });
       await chatSession.reloadSession(session.task_id);
       return;
@@ -533,6 +622,13 @@ export function SonaWorkspace() {
             query: trimmed,
             auto_route: true,
             prefer_existing_data: true,
+            workflow_options: memorySettings?.enable_memory
+              ? {
+                  wiki_style: memorySettings.wiki_style,
+                  wiki_topk: memorySettings.wiki_topk,
+                  wiki_weibo_aux: memorySettings.wiki_weibo_aux,
+                }
+              : {},
           });
           setActiveRun({ runId: run.run_id, taskId: streamTaskId });
           setRouteStatus('Agent 运行中');
@@ -615,12 +711,95 @@ export function SonaWorkspace() {
     setInput(commandInputValue(command));
   }
 
+  function turnForMessage(messageId: string) {
+    return conversationTurns.find((turn) => turn.id === messageId || turn.messageId === messageId);
+  }
+
+  function userTurnForRegenerate(messageId: string) {
+    const index = conversationTurns.findIndex((turn) => turn.id === messageId || turn.messageId === messageId);
+    if (index < 0) return undefined;
+    for (let i = index; i >= 0; i -= 1) {
+      const turn = conversationTurns[i];
+      if (turn.kind === 'user') return turn;
+    }
+    return undefined;
+  }
+
+  async function applyUpdatedSession(session: NonNullable<typeof activeSession>) {
+    setActiveSession(session);
+    upsertSession(session);
+  }
+
+  const handleMessageChange: OnMessageChange = async (messageId, content) => {
+    const text = content.trim();
+    if (!currentTaskId || !text || messageId === 'live-stream') return;
+    const turn = turnForMessage(messageId);
+    if (!turn?.messageId) return;
+    try {
+      const updated = await sonaApi.updateSessionMessage(currentTaskId, turn.messageId, {
+        content: text,
+        mode: turn.kind === 'user' ? 'branch' : 'message',
+      });
+      await applyUpdatedSession(updated);
+      messageApi.success(turn.kind === 'user' ? '已更新，后续回复已截断' : '消息已更新');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setApiError(message);
+      messageApi.error(message);
+    }
+  };
+
+  const handleMessageAction: OnActionsClick = async (action, message: LobeChatMessage) => {
+    if (!currentTaskId || message.id === 'live-stream') return;
+    const taskId = currentTaskId;
+    const key = String(action.key || '');
+    if (key === 'copy' || key === 'edit') return;
+
+    if (key === 'del') {
+      const turn = turnForMessage(message.id);
+      if (!turn?.messageId) return;
+      const messageId = turn.messageId;
+      modalApi.confirm({
+        centered: true,
+        title: null,
+        content: '删除这条对话记录及其关联上下文？',
+        okText: '删除',
+        okButtonProps: { danger: true },
+        cancelText: '取消',
+        onOk: async () => {
+          const updated = await sonaApi.deleteSessionMessage(taskId, messageId, 'turn');
+          await applyUpdatedSession(updated);
+          messageApi.success('已删除');
+        },
+      });
+      return;
+    }
+
+    if (key === 'regenerate') {
+      const anchor = userTurnForRegenerate(message.id);
+      if (!anchor?.messageId || busy) return;
+      const anchorMessageId = anchor.messageId;
+      try {
+        const query = anchor.content;
+        const updated = await sonaApi.deleteSessionMessage(taskId, anchorMessageId, 'branch');
+        await applyUpdatedSession(updated);
+        await executeQuery(query);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        setApiError(errorMessage);
+        messageApi.error(errorMessage);
+      }
+    }
+  };
+
   useEffect(() => {
     // Hydrate remote API state on mount.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     refreshStatus();
     sonaApi.models().then((result) => setModels(result.models || [])).catch(() => undefined);
     sonaApi.tools().then((result) => setTools(result.tools || [])).catch(() => undefined);
+    sonaApi.skills().then((result) => setSkills(result.skills || [])).catch(() => undefined);
+    sonaApi.memorySettings().then((result) => setMemorySettings(result.settings)).catch(() => undefined);
     sonaApi.commands().then((result) => setCommands(result.commands || [])).catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -643,10 +822,15 @@ export function SonaWorkspace() {
         expand={sidebarExpand}
         health={health}
         homeMode={homeMode}
+        settingsMode={settingsMode}
+        settingsTab={settingsTab}
         onExpandChange={setSidebarExpand}
         onCreateSession={createNewSession}
+        onCloseSettings={closeSettings}
         onHome={openHome}
         onOpenProfile={() => openUtility('profile')}
+        onOpenSettings={() => openSettings('skills')}
+        onOpenSettingsTab={(tab) => openSettings(tab)}
         onOpenTasks={() => openUtility('tasks')}
         onRefresh={refreshStatus}
         onSearchChange={setSearchText}
@@ -661,8 +845,8 @@ export function SonaWorkspace() {
       <section className="conversationPane">
         <header className="sonarHeader">
           <div className="headerTitle">
-            <strong>{showChat ? sessionTitle(activeSession || {}) : '首页'}</strong>
-            {showChat && activeSession?.task_id ? (
+            <strong>{settingsMode ? 'Settings' : showChat ? sessionTitle(activeSession || {}) : '首页'}</strong>
+            {!settingsMode && showChat && activeSession?.task_id ? (
               <Dropdown
                 menu={{
                   onClick: ({ key }) => runSessionAction(activeSession.task_id, key),
@@ -681,13 +865,17 @@ export function SonaWorkspace() {
           </div>
           <div className="headerActions">
             <Tag color={busy ? 'processing' : 'default'}>{routeStatus}</Tag>
-            {activeSession?.token_usage ? (
-              <TokenTag
-                maxValue={200000}
-                mode="used"
-                showInfo={false}
-                value={Number(activeSession.token_usage.total_tokens || 0)}
-              />
+            {contextUsage ? (
+              <Tooltip title={contextUsage.title}>
+                <span className="headerTokenUsage">
+                  <TokenTag
+                    maxValue={contextUsage.max}
+                    mode="used"
+                    showInfo={false}
+                    value={contextUsage.used}
+                  />
+                </span>
+              </Tooltip>
             ) : null}
             <button onClick={() => setTopicOpen((open) => !open)} title="打开侧栏">
               <PanelRight size={18} />
@@ -696,15 +884,45 @@ export function SonaWorkspace() {
         </header>
 
         <div className="workspaceBody">
-          <div className="conversationStage">
-            <div className={`conversationScroll${sessionLoading ? ' isLoading' : ''}`}>
+            <div className="conversationStage">
+              <div className={`conversationScroll${sessionLoading ? ' isLoading' : ''}`}>
               {sessionLoading ? (
                 <div className="sessionLoadingBar">
                   <LoadingDots />
                 </div>
               ) : null}
-              <div className={showChat ? 'chatCanvas' : 'homeCanvas'}>
-                {!showChat ? (
+              <div className={settingsMode ? 'settingsCanvas' : showChat ? 'chatCanvas' : 'homeCanvas'}>
+                {settingsMode ? (
+                  <section className="settingsPage">
+                    {settingsTab === 'skills' ? (
+                      <>
+                        <div className="settingsHead">
+                          <span>
+                            <Puzzle size={18} />
+                          </span>
+                          <div>
+                            <h1>Skills</h1>
+                            <p>当前后端暴露给 Agent 的可用技能。</p>
+                          </div>
+                        </div>
+                        <div className="settingsList">
+                          {skills.map((skill) => (
+                            <div className="settingsRow" key={skill.id}>
+                              <div>
+                                <strong>{skill.name}</strong>
+                                <span>{skill.description || '后端未提供描述'}</span>
+                              </div>
+                              <Tag color={skill.enabled ? 'success' : 'default'}>{skill.source}</Tag>
+                            </div>
+                          ))}
+                          {!skills.length ? <p className="muted">暂无后端 skills 数据。</p> : null}
+                        </div>
+                      </>
+                    ) : (
+                      <SonaMemorySettings onChange={patchMemorySettings} settings={memorySettings} />
+                    )}
+                  </section>
+                ) : !showChat ? (
                   <section className="homeHero">
                     <div className="heroAgent">
                       <span className="sonaMark large">📡</span>
@@ -752,6 +970,8 @@ export function SonaWorkspace() {
                 ) : (
                   <SonaChatThread
                     currentTaskId={currentTaskId}
+                    onMessageAction={handleMessageAction}
+                    onMessageChange={handleMessageChange}
                     onApproval={handleAgentApproval}
                     onOpenReport={openReportPanel}
                     turns={conversationTurns}
@@ -765,14 +985,16 @@ export function SonaWorkspace() {
               </div>
             </div>
 
-            <SonaChatComposer
-              busy={busy}
-              commands={commands}
-              onCommand={handleComposerCommand}
-              onInput={setInput}
-              onSend={submit}
-              value={input}
-            />
+            {!settingsMode ? (
+              <SonaChatComposer
+                busy={busy}
+                commands={commands}
+                onCommand={handleComposerCommand}
+                onInput={setInput}
+                onSend={submit}
+                value={input}
+              />
+            ) : null}
           </div>
 
           <aside className={`topicPanel ${topicOpen ? 'open' : 'closed'}`}>

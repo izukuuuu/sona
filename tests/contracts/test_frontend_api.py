@@ -147,6 +147,56 @@ def test_report_endpoint_localizes_legacy_sandbox_file_url() -> None:
     assert "legacy demo" in report.text
 
 
+def test_report_endpoint_localizes_encoded_legacy_sandbox_file_url() -> None:
+    task_id = get_session_manager().create_session("encoded legacy report path")
+    ensure_task_dirs(task_id)
+    report_dir = get_task_dir(task_id) / "结果文件"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / "report_20260512_015642.html"
+    report_path.write_text("<html><body>encoded legacy demo</body></html>", encoding="utf-8")
+
+    legacy_url = (
+        f"file:///Users/example/sona-master/sandbox/{task_id}/"
+        "%E7%BB%93%E6%9E%9C%E6%96%87%E4%BB%B6/report_20260512_015642.html"
+    )
+    get_session_manager().add_message(task_id, "assistant", f"已完成舆情事件分析工作流。报告：{legacy_url}")
+
+    report = client.get(f"/v1/tasks/{task_id}/report")
+
+    assert report.status_code == 200
+    assert "encoded legacy demo" in report.text
+
+
+def test_report_endpoint_localizes_windows_sandbox_file_urls() -> None:
+    cases = [
+        (
+            "windows drive report path",
+            "file:///F:/legacy/sona-master/sandbox/{task_id}/"
+            "%E7%BB%93%E6%9E%9C%E6%96%87%E4%BB%B6/report_win.html",
+        ),
+        (
+            "windows backslash report path",
+            "file:///F:\\legacy\\sona-master\\sandbox\\{task_id}\\"
+            "%E7%BB%93%E6%9E%9C%E6%96%87%E4%BB%B6\\report_win.html",
+        ),
+    ]
+    for title, url_template in cases:
+        task_id = get_session_manager().create_session(title)
+        ensure_task_dirs(task_id)
+        report_dir = get_task_dir(task_id) / "结果文件"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_path = report_dir / "report_win.html"
+        report_path.write_text(f"<html><body>{title}</body></html>", encoding="utf-8")
+
+        legacy_url = url_template.format(task_id=task_id)
+        get_session_manager().add_message(task_id, "assistant", f"已完成舆情事件分析工作流。报告：{legacy_url}")
+
+        report = client.get(f"/v1/tasks/{task_id}/report")
+
+        assert report.status_code == 200
+        assert title in report.text
+
+
 def test_chat_stream_persists_accumulated_tokens(monkeypatch: Any) -> None:
   created = client.post("/v1/chat/sessions", json={"initial_query": "persist tokens"}).json()
 
@@ -166,6 +216,52 @@ def test_chat_stream_persists_accumulated_tokens(monkeypatch: Any) -> None:
   session = client.get(f"/v1/chat/sessions/{created['task_id']}").json()
   assert [message["role"] for message in session["messages"]] == ["user", "assistant"]
   assert session["messages"][1]["content"] == "你好，世界"
+
+
+def test_session_message_edit_branch_truncates_following_context() -> None:
+    created = client.post("/v1/chat/sessions", json={"initial_query": "edit branch"}).json()
+    task_id = created["task_id"]
+    manager = get_session_manager()
+    manager.add_message(task_id, "user", "old question")
+    manager.add_message(task_id, "assistant", "old answer")
+    session = client.get(f"/v1/chat/sessions/{task_id}").json()
+    user_id = session["messages"][0]["id"]
+
+    edited = client.patch(
+        f"/v1/chat/sessions/{task_id}/messages/{user_id}",
+        json={"content": "new question", "mode": "branch"},
+    )
+
+    assert edited.status_code == 200
+    messages = edited.json()["messages"]
+    assert [message["role"] for message in messages] == ["user"]
+    assert messages[0]["content"] == "new question"
+
+
+def test_session_message_delete_turn_removes_assistant_tool_block() -> None:
+    created = client.post("/v1/chat/sessions", json={"initial_query": "delete turn"}).json()
+    task_id = created["task_id"]
+    manager = get_session_manager()
+    manager.add_message(task_id, "user", "use tool")
+    manager.add_message(
+        task_id,
+        "assistant",
+        "",
+        tool_calls=[{"id": "call_delete_turn", "name": "demo_tool", "args": {}}],
+    )
+    manager.add_message(task_id, "tool", "tool output", tool_name="demo_tool", tool_call_id="call_delete_turn")
+    manager.add_message(task_id, "assistant", "final answer")
+    manager.add_message(task_id, "user", "next question")
+    session = client.get(f"/v1/chat/sessions/{task_id}").json()
+    assistant_id = session["messages"][1]["id"]
+
+    deleted = client.delete(f"/v1/chat/sessions/{task_id}/messages/{assistant_id}?mode=turn")
+
+    assert deleted.status_code == 200
+    messages = deleted.json()["messages"]
+    assert [message["role"] for message in messages] == ["user", "user"]
+    assert messages[0]["content"] == "use tool"
+    assert messages[1]["content"] == "next question"
 
 
 def test_chat_stream_sse_contract(monkeypatch: Any) -> None:

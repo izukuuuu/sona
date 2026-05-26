@@ -7,7 +7,7 @@
   --line: #e6e6e8;
   --hover: #ececee;
   --active: #e9e9eb;
-  --accent: #1677ff;
+  --accent: #0b7285;
   --danger: #e5484d;
   --shadow: 0 14px 38px rgba(20, 20, 20, 0.08);
   --radius: 10px;
@@ -301,6 +301,21 @@ textarea {
   color: var(--ink);
 }
 
+.sonaFooterMenu {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 8px;
+  color: #8a8a90;
+  cursor: pointer;
+}
+
+.sonaFooterMenu:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
 .emptyTopics {
   margin: 8px 12px;
   color: var(--muted);
@@ -377,6 +392,12 @@ textarea {
   gap: 6px;
 }
 
+.headerTokenUsage {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .workspaceBody {
   display: flex;
   min-height: 0;
@@ -412,7 +433,8 @@ textarea {
 }
 
 .homeCanvas,
-.chatCanvas {
+.chatCanvas,
+.settingsCanvas {
   width: min(100%, 1084px);
   margin: 0 auto;
   padding: 48px 24px 24px;
@@ -421,6 +443,11 @@ textarea {
 .chatCanvas {
   width: min(100%, 1080px);
   padding-top: 76px;
+}
+
+.settingsCanvas {
+  width: min(100%, 1024px);
+  padding-top: 32px;
 }
 
 .chatCanvas .lobe-flex {
@@ -522,6 +549,18 @@ textarea {
   gap: 10px;
 }
 
+.sonaAssistantMessageContent {
+  display: grid;
+  width: 100%;
+  gap: 10px;
+}
+
+.sonaAssistantInlinePanels {
+  display: grid;
+  width: min(100%, 760px);
+  gap: 8px;
+}
+
 .sonaChatAnswerText {
   margin: 0;
   white-space: pre-wrap;
@@ -531,30 +570,36 @@ textarea {
   width: min(100%, 420px);
   border-radius: 12px;
   background: #fff;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.sonaReportFileCard:hover {
+  border-color: #8fb9c2;
+  box-shadow: 0 8px 24px rgb(30 64 175 / 10%);
+  transform: translateY(-1px);
+}
+
+.sonaReportFileCard:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .sonaAgentSteps {
-  width: min(100%, 760px);
-  margin-bottom: 8px;
-  padding: 8px 10px;
-  border: 1px solid #e8e8ec;
-  border-radius: 10px;
+  width: 100%;
   background: #f8f9fb;
 }
 
-.sonaAgentSteps summary {
+.sonaAgentStepsTitle {
   display: flex;
   align-items: center;
   gap: 8px;
-  cursor: pointer;
   color: #6b6b73;
   font-size: 13px;
   font-weight: 600;
-  list-style: none;
-}
-
-.sonaAgentSteps summary::-webkit-details-marker {
-  display: none;
 }
 
 .sonaAgentStepsCount {
@@ -569,7 +614,7 @@ textarea {
 .sonaAgentStepsList {
   display: grid;
   gap: 8px;
-  margin: 10px 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
@@ -616,7 +661,7 @@ textarea {
 }
 
 .sonaApprovalPanel {
-  width: min(100%, 760px);
+  width: 100%;
   padding: 12px;
   border: 1px solid #f0d39a;
   border-radius: 8px;
@@ -664,8 +709,7 @@ textarea {
 }
 
 .sonaResearchPanel {
-  width: min(100%, 760px);
-  margin-bottom: 8px;
+  width: 100%;
   padding: 12px;
   border: 1px solid #d9e2f1;
   border-radius: 8px;
@@ -762,6 +806,75 @@ textarea {
 .homeHero {
   max-width: 1084px;
   margin: 0 auto;
+}
+
+.settingsPage {
+  display: grid;
+  gap: 28px;
+  width: 100%;
+}
+
+.settingsHead {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.settingsHead > span {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  place-items: center;
+  border-radius: 8px;
+  background: #f1f3f6;
+  color: #3c4658;
+}
+
+.settingsHead h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.25;
+}
+
+.settingsHead p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.settingsList {
+  display: grid;
+  gap: 0;
+  border-top: 1px solid var(--line);
+}
+
+.settingsRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  min-height: 66px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.settingsRow div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.settingsRow strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.settingsRow span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .heroAgent {

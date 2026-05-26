@@ -1553,6 +1553,7 @@ def answer_wiki_query(
     *,
     topk: int = 6,
     style: str = "concise",
+    weibo_aux: bool = True,
     project_root: Path | None = None,
 ) -> Dict[str, Any]:
     try:
@@ -1600,7 +1601,7 @@ def answer_wiki_query(
 
     weibo_aux_text = ""
     weibo_meta: Dict[str, Any] = {"used": False}
-    if _should_enrich_with_weibo(query):
+    if weibo_aux and _should_enrich_with_weibo(query):
         from workflow.wiki_rag import fetch_weibo_snippets_for_wiki
 
         topic = (key_phrase or query.strip())[:120]

@@ -12,6 +12,8 @@ import {
 } from '@lobehub/ui';
 import {
   Archive,
+  ArrowLeft,
+  Brain,
   ChevronDown,
   Copy,
   Hash,
@@ -20,8 +22,10 @@ import {
   MessageSquarePlus,
   MoreHorizontal,
   Pencil,
+  Puzzle,
   RefreshCw,
   Search,
+  Settings,
   Trash2,
 } from 'lucide-react';
 import type { ApiHealth } from '@/types/sona';
@@ -41,10 +45,15 @@ export type SonaSidebarProps = {
   expand: boolean;
   health: ApiHealth | null;
   homeMode: boolean;
+  settingsMode: boolean;
+  settingsTab: 'skills' | 'memory';
   onExpandChange: (expand: boolean) => void;
   onCreateSession: () => void;
+  onCloseSettings: () => void;
   onHome: () => void;
   onOpenProfile: () => void;
+  onOpenSettings: () => void;
+  onOpenSettingsTab: (tab: 'skills' | 'memory') => void;
   onOpenTasks: () => void;
   onRefresh: () => void;
   onSearchChange: (value: string) => void;
@@ -58,11 +67,33 @@ export type SonaSidebarProps = {
 
 function SidebarHeader({
   expand,
+  onCloseSettings,
   onHome,
+  settingsMode,
 }: {
   expand: boolean;
+  onCloseSettings: () => void;
   onHome: () => void;
+  settingsMode: boolean;
 }) {
+  if (settingsMode) {
+    return (
+      <Flexbox>
+        <Flexbox
+          align="center"
+          gap={8}
+          horizontal
+          justify="space-between"
+          padding="8px 6px"
+          style={{ minHeight: 42, width: '100%' }}
+        >
+          {expand ? <Text>Settings</Text> : null}
+          <ActionIcon icon={ArrowLeft} onClick={onCloseSettings} size="small" title="返回" />
+        </Flexbox>
+      </Flexbox>
+    );
+  }
+
   return (
     <Flexbox>
       <Flexbox
@@ -96,12 +127,15 @@ function SidebarBody({
   onCreateSession,
   onHome,
   onOpenProfile,
+  onOpenSettingsTab,
   onOpenTasks,
   onSearchChange,
   onSelectSession,
   onSessionAction,
   onToday,
   searchText,
+  settingsMode,
+  settingsTab,
   sessionTitle,
   sessions,
 }: Omit<SonaSidebarProps, 'expand' | 'health' | 'onRefresh' | 'onExpandChange'> & {
@@ -191,6 +225,14 @@ function SidebarBody({
   }, [expand, mainItems, sessionItems]);
 
   function handleSelect(key: string) {
+    if (key === 'settings-skills') {
+      onOpenSettingsTab('skills');
+      return;
+    }
+    if (key === 'settings-memory') {
+      onOpenSettingsTab('memory');
+      return;
+    }
     if (key === 'new') {
       onCreateSession();
       return;
@@ -208,6 +250,26 @@ function SidebarBody({
       return;
     }
     onSelectSession(key);
+  }
+
+  if (settingsMode) {
+    const settingsItems: MenuItemType[] = [
+      { icon: Puzzle, key: 'settings-skills', label: 'Skills' },
+      { icon: Brain, key: 'settings-memory', label: 'Memory' },
+    ];
+    return (
+      <Flexbox style={{ flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative' }}>
+        <Menu
+          inlineCollapsed={!expand}
+          items={settingsItems}
+          mode="inline"
+          selectable
+          selectedKeys={[`settings-${settingsTab}`]}
+          variant="borderless"
+          onSelect={({ key }) => handleSelect(String(key))}
+        />
+      </Flexbox>
+    );
   }
 
   return (
@@ -249,10 +311,12 @@ function SidebarBody({
 function SidebarFooter({
   expand,
   health,
+  onOpenSettings,
   onRefresh,
 }: {
   expand: boolean;
   health: ApiHealth | null;
+  onOpenSettings: () => void;
   onRefresh: () => void;
 }) {
   return (
@@ -271,13 +335,29 @@ function SidebarFooter({
       ) : (
         <span className={`statusDot ${health ? 'ok' : 'bad'}`} title={health ? '在线' : '离线'} />
       )}
-      <ActionIcon icon={RefreshCw} onClick={onRefresh} size="small" title="刷新" />
+      <Flexbox align="center" gap={2} horizontal>
+        <ActionIcon icon={RefreshCw} onClick={onRefresh} size="small" title="刷新" />
+        <Dropdown
+          menu={{
+            onClick: ({ key }) => {
+              if (key === 'settings') onOpenSettings();
+            },
+            items: [{ icon: <Settings size={15} />, key: 'settings', label: 'Settings' }],
+          }}
+          placement="topLeft"
+          trigger={['click']}
+        >
+          <span className="sonaFooterMenu" onClick={(event) => event.preventDefault()} role="button" tabIndex={0}>
+            <MoreHorizontal size={16} />
+          </span>
+        </Dropdown>
+      </Flexbox>
     </Flexbox>
   );
 }
 
 export function SonaSidebar(props: SonaSidebarProps) {
-  const { expand, health, onExpandChange, onRefresh, onHome } = props;
+  const { expand, health, onCloseSettings, onExpandChange, onOpenSettings, onRefresh, onHome, settingsMode } = props;
 
   return (
     <DraggableSideNav
@@ -290,9 +370,21 @@ export function SonaSidebar(props: SonaSidebarProps) {
       showHandleHighlight
       body={(renderExpand) => <SidebarBody {...props} expand={renderExpand} />}
       footer={(renderExpand) => (
-        <SidebarFooter expand={renderExpand} health={health} onRefresh={onRefresh} />
+        <SidebarFooter
+          expand={renderExpand}
+          health={health}
+          onOpenSettings={onOpenSettings}
+          onRefresh={onRefresh}
+        />
       )}
-      header={(renderExpand) => <SidebarHeader expand={renderExpand} onHome={onHome} />}
+      header={(renderExpand) => (
+        <SidebarHeader
+          expand={renderExpand}
+          onCloseSettings={onCloseSettings}
+          onHome={onHome}
+          settingsMode={settingsMode}
+        />
+      )}
     />
   );
 }

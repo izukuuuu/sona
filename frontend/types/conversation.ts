@@ -17,6 +17,8 @@ export type ConversationTurn =
       kind: 'user';
       content: string;
       timestamp: number;
+      messageId?: string;
+      messageIndex?: number;
     }
   | {
       id: string;
@@ -26,6 +28,8 @@ export type ConversationTurn =
       answer: string;
       /** Tool / route / interim notes — collapsed under “Agent 过程”. */
       steps: AgentStep[];
+      messageId?: string;
+      messageIndex?: number;
     };
 
 /** @deprecated Internal stream building — use AgentStep after consolidate. */

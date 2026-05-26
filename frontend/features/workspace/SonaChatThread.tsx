@@ -2,7 +2,13 @@
 
 import type { AgentStep, ConversationTurn } from '@/types/conversation';
 import { Button } from 'antd';
-import { ChatList, type ChatMessage as LobeChatMessage } from '@lobehub/ui/chat';
+import { AccordionItem } from '@lobehub/ui';
+import {
+  ChatList,
+  type ChatMessage as LobeChatMessage,
+  type OnActionsClick,
+  type OnMessageChange,
+} from '@lobehub/ui/chat';
 import { Activity, Check, PencilLine, X } from 'lucide-react';
 import { SonaChatAnswer } from '@/features/workspace/SonaChatAnswer';
 import { SONA_ASSISTANT_TITLE } from '@/features/workspace/chatMessageUi';
@@ -27,11 +33,19 @@ function formatChatTime(value: number) {
 function AgentStepsPanel({ steps }: { steps: AgentStep[] }) {
   if (!steps.length) return null;
   return (
-    <details className="sonaAgentSteps">
-      <summary>
+    <AccordionItem
+      classNames={{ base: 'sonaAgentSteps' }}
+      defaultExpand={false}
+      itemKey="agent-steps"
+      padding={8}
+      title={(
+        <span className="sonaAgentStepsTitle">
         Agent 过程
-        <span className="sonaAgentStepsCount">{steps.length} 步</span>
-      </summary>
+          <span className="sonaAgentStepsCount">{steps.length} 步</span>
+        </span>
+      )}
+      variant="outlined"
+    >
       <ol className="sonaAgentStepsList">
         {steps.map((step) => (
           <li key={step.id} className={`sonaAgentStep sonaAgentStep--${step.kind}`}>
@@ -40,7 +54,7 @@ function AgentStepsPanel({ steps }: { steps: AgentStep[] }) {
           </li>
         ))}
       </ol>
-    </details>
+    </AccordionItem>
   );
 }
 
@@ -96,10 +110,35 @@ function ApprovalPanel({
   );
 }
 
+function AssistantInlinePanels({
+  onApproval,
+  turn,
+}: {
+  onApproval?: (step: AgentStep, action: AgentApprovalAction) => void;
+  turn: ConversationTurn;
+}) {
+  if (turn.kind !== 'assistant') return null;
+  const research = turn.steps.filter((step) => step.kind === 'research');
+  const approvals = turn.steps.filter((step) => step.kind === 'approval');
+  const agentSteps = turn.steps.filter((step) => step.kind !== 'approval' && step.kind !== 'research');
+  if (!research.length && !approvals.length && !agentSteps.length) return null;
+  return (
+    <div className="sonaAssistantInlinePanels">
+      <ResearchProgressPanel steps={research} />
+      {approvals.map((step) => (
+        <ApprovalPanel key={step.id} onApproval={onApproval} step={step} />
+      ))}
+      <AgentStepsPanel steps={agentSteps} />
+    </div>
+  );
+}
+
 type SonaChatThreadProps = {
   turns: ConversationTurn[];
   currentTaskId?: string;
   onApproval?: (step: AgentStep, action: AgentApprovalAction) => void;
+  onMessageAction?: OnActionsClick;
+  onMessageChange?: OnMessageChange;
   onOpenReport?: (taskId: string) => void;
 };
 
@@ -128,46 +167,51 @@ function lobeMessagesFromTurns(
   }));
 }
 
-export function SonaChatThread({ turns, currentTaskId, onApproval, onOpenReport }: SonaChatThreadProps) {
+export function SonaChatThread({
+  turns,
+  currentTaskId,
+  onApproval,
+  onMessageAction,
+  onMessageChange,
+  onOpenReport,
+}: SonaChatThreadProps) {
   const data = lobeMessagesFromTurns(turns, { currentTaskId, onApproval, onOpenReport });
   return (
     <div className="sonaChatThread" role="log" aria-live="polite">
       <ChatList
         data={data}
         loadingId={turns.some((turn) => turn.id === 'live-stream') ? 'live-stream' : undefined}
+        onActionsClick={onMessageAction}
+        onMessageChange={onMessageChange}
         renderMessages={{
           assistant: ({ content, extra, id }) => {
             const scoped = extra as LobeExtra;
-            return (
-              <SonaChatAnswer
-                answer={content}
-                currentTaskId={scoped.currentTaskId}
-                onOpenReport={scoped.onOpenReport}
-                streaming={id === 'live-stream'}
-              />
-            );
-          },
-          user: ({ content, createAt }) => (
-            <span title={formatChatTime(createAt)}>{content}</span>
-          ),
-        }}
-        renderMessagesExtra={{
-          assistant: ({ extra }) => {
-            const scoped = extra as LobeExtra;
             if (scoped.turn.kind !== 'assistant') return null;
             return (
-              <>
-                <ResearchProgressPanel steps={scoped.turn.steps.filter((step) => step.kind === 'research')} />
-                {scoped.turn.steps.filter((step) => step.kind === 'approval').map((step) => (
-                  <ApprovalPanel key={step.id} onApproval={scoped.onApproval} step={step} />
-                ))}
-                <AgentStepsPanel steps={scoped.turn.steps.filter((step) => step.kind !== 'approval' && step.kind !== 'research')} />
-              </>
+              <div className="sonaAssistantMessageContent">
+                <AssistantInlinePanels onApproval={scoped.onApproval} turn={scoped.turn} />
+                <SonaChatAnswer
+                  answer={content}
+                  currentTaskId={scoped.currentTaskId}
+                  onOpenReport={scoped.onOpenReport}
+                  streaming={id === 'live-stream'}
+                />
+              </div>
             );
           },
+          user: ({ content, createAt, editableContent }) => (
+            <span title={formatChatTime(createAt)}>{editableContent || content}</span>
+          ),
         }}
         showAvatar
         showTitle
+        text={{
+          copy: '复制',
+          copySuccess: '已复制',
+          delete: '删除',
+          edit: '编辑',
+          regenerate: '重新生成',
+        }}
         variant="bubble"
       />
     </div>

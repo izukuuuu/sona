@@ -31,6 +31,16 @@ async function downloadReport(url: string, fileName: string) {
 export function SonaReportFileCard({ report, onOpenReport }: SonaReportFileCardProps) {
   const previewUrl = report.taskId ? reportApiPath(report.taskId) : undefined;
   const fileLabel = report.fileType.toUpperCase();
+  const canOpen = Boolean(previewUrl);
+
+  const openReport = () => {
+    if (!previewUrl) return;
+    if (report.taskId && onOpenReport) {
+      onOpenReport(report.taskId);
+      return;
+    }
+    window.open(previewUrl, '_blank', 'noopener,noreferrer');
+  };
 
   return (
     <Block
@@ -38,7 +48,17 @@ export function SonaReportFileCard({ report, onOpenReport }: SonaReportFileCardP
       className="sonaReportFileCard"
       gap={12}
       horizontal
+      onClick={openReport}
+      onKeyDown={(event) => {
+        if (!canOpen) return;
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openReport();
+        }
+      }}
       padding={12}
+      role={canOpen ? 'button' : undefined}
+      tabIndex={canOpen ? 0 : undefined}
       variant="outlined"
     >
       <FileTypeIcon filetype={report.fileType} size={40} type="file" variant="color" />
@@ -54,7 +74,10 @@ export function SonaReportFileCard({ report, onOpenReport }: SonaReportFileCardP
             <ActionIcon
               icon={PanelRightOpen}
               size="small"
-              onClick={() => onOpenReport(report.taskId!)}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenReport(report.taskId!);
+              }}
             />
           </Tooltip>
         ) : null}
@@ -63,7 +86,10 @@ export function SonaReportFileCard({ report, onOpenReport }: SonaReportFileCardP
             <ActionIcon
               icon={ExternalLink}
               size="small"
-              onClick={() => window.open(previewUrl, '_blank', 'noopener,noreferrer')}
+              onClick={(event) => {
+                event.stopPropagation();
+                window.open(previewUrl, '_blank', 'noopener,noreferrer');
+              }}
             />
           </Tooltip>
         ) : null}
@@ -72,7 +98,8 @@ export function SonaReportFileCard({ report, onOpenReport }: SonaReportFileCardP
             <ActionIcon
               icon={Download}
               size="small"
-              onClick={() => {
+              onClick={(event) => {
+                event.stopPropagation();
                 void downloadReport(previewUrl, report.fileName).catch((error) => {
                   console.error(error);
                 });
