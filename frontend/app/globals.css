@@ -1,0 +1,1135 @@
+:root {
+  --page: #f4f4f5;
+  --sidebar: #f7f7f8;
+  --surface: #ffffff;
+  --ink: #1f1f22;
+  --muted: #85858b;
+  --line: #e6e6e8;
+  --hover: #ececee;
+  --active: #e9e9eb;
+  --accent: #1677ff;
+  --danger: #e5484d;
+  --shadow: 0 14px 38px rgba(20, 20, 20, 0.08);
+  --radius: 10px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--page);
+  color: var(--ink);
+}
+
+body {
+  font-family: Arial, "Microsoft YaHei", sans-serif;
+  letter-spacing: 0;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.sonarShell {
+  display: flex;
+  height: 100svh;
+  overflow: hidden;
+  padding: 8px;
+  gap: 0;
+  background: var(--page);
+}
+
+.sonaSideNav {
+  flex-shrink: 0;
+  height: 100%;
+}
+
+.sonaSideNavSearch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 12px 8px;
+  padding: 0 10px;
+  min-height: 36px;
+  border-radius: var(--radius);
+  color: #8a8a90;
+}
+
+.sonaSideNavSearch:focus-within,
+.sonaSideNavSearch:hover {
+  background: var(--hover);
+}
+
+.sonaSideNavSearch input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.sonaSideNavSectionLink {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 4px 8px 0;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: #8a8a90;
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+
+.sonaSideNavSectionLink:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.headerActions button,
+.headerTitle button,
+.sidebarFoot button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #8a8a90;
+  cursor: pointer;
+}
+
+.headerActions button:hover,
+.headerTitle button:hover,
+.sidebarFoot button:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.agentIdentity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.agentIdentity:hover {
+  background: var(--hover);
+}
+
+.agentIdentity strong {
+  overflow: hidden;
+  flex: 1;
+  font-size: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sonaMark,
+.sonaAvatar {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.sonaAvatar.user {
+  font-size: 14px;
+  font-weight: 600;
+  color: #4f4f57;
+}
+
+.sonaMark.large {
+  width: 36px;
+  height: 36px;
+  font-size: 26px;
+}
+
+.sidebarNav,
+.sidebarSection,
+.topicList {
+  display: grid;
+  gap: 4px;
+}
+
+.sidebarNav button,
+.homeItem,
+.sectionTitle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: #696970;
+  cursor: pointer;
+  font-size: 15px;
+  text-align: left;
+}
+
+.sidebarNav button:hover,
+.homeItem:hover,
+.sectionTitle:hover,
+.topicItem:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.statusDot {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.statusDot.ok {
+  color: #1a7f37;
+}
+
+.statusDot.bad {
+  color: var(--danger);
+}
+
+.searchBox {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: var(--radius);
+  color: #8a8a90;
+}
+
+.searchBox:focus-within,
+.searchBox:hover {
+  background: var(--hover);
+}
+
+.searchBox input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.sectionTitle {
+  justify-content: flex-start;
+  min-height: 32px;
+  color: #8a8a90;
+  font-size: 13px;
+}
+
+.sectionTitle span {
+  margin-left: 0;
+}
+
+.topicList {
+  min-height: 0;
+  overflow: auto;
+  padding-top: 6px;
+}
+
+.topicItem {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 28px;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-height: 42px;
+  padding: 0 8px 0 12px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.topicItem > span:first-child {
+  color: #8a8a90;
+  font-size: 18px;
+}
+
+.topicItem strong {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topicMenu {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 8px;
+  color: #8a8a90;
+}
+
+.topicMenu:hover {
+  background: #dedee1;
+  color: var(--ink);
+}
+
+.emptyTopics {
+  margin: 8px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.sidebarFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: auto;
+  padding: 4px 8px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ok {
+  color: #1a7f37;
+}
+
+.bad,
+.errorText {
+  color: var(--danger);
+}
+
+.errorText {
+  margin: 0 10px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.conversationPane {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  height: 100%;
+  overflow: hidden;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.sonarHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  flex: none;
+  padding: 0 12px 0 18px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.headerTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.headerTitle strong {
+  overflow: hidden;
+  max-width: 420px;
+  font-size: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workspaceBody {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.conversationStage {
+  display: flex;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.conversationScroll {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+
+.conversationScroll.isLoading .chatCanvas,
+.conversationScroll.isLoading .homeCanvas {
+  min-height: 240px;
+}
+
+.sessionLoadingBar {
+  display: flex;
+  justify-content: center;
+  padding: 24px 0 8px;
+}
+
+.homeCanvas,
+.chatCanvas {
+  width: min(100%, 1084px);
+  margin: 0 auto;
+  padding: 48px 24px 24px;
+}
+
+.chatCanvas {
+  width: min(100%, 1080px);
+  padding-top: 76px;
+}
+
+.chatCanvas .lobe-flex {
+  max-width: 100%;
+}
+
+.chatCanvas time {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sonaChatThread {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+}
+
+.sonaChatRow {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(100%, 760px);
+}
+
+.sonaChatRow.isUser {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.sonaChatRow.isAssistant {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+.sonaChatRowHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sonaChatRowHead strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sonaChatRowAvatar {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.sonaChatBubble {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.sonaChatRow.isUser .sonaChatBubble {
+  border-color: #c8d6f0;
+  background: #edf4ff;
+}
+
+.sonaChatRow.isAssistant .sonaChatBubble {
+  background: #fafafa;
+}
+
+.sonaChatRow.isAssistant .sonaChatBubble.sonaChatAnswer {
+  white-space: normal;
+}
+
+.sonaChatAnswer {
+  margin-top: 0;
+}
+
+.sonaChatMarkdown {
+  width: 100%;
+}
+
+.sonaChatAnswerBody {
+  display: grid;
+  gap: 10px;
+}
+
+.sonaChatAnswerText {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.sonaReportFileCard {
+  width: min(100%, 420px);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.sonaAgentSteps {
+  width: min(100%, 760px);
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid #e8e8ec;
+  border-radius: 10px;
+  background: #f8f9fb;
+}
+
+.sonaAgentSteps summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: #6b6b73;
+  font-size: 13px;
+  font-weight: 600;
+  list-style: none;
+}
+
+.sonaAgentSteps summary::-webkit-details-marker {
+  display: none;
+}
+
+.sonaAgentStepsCount {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #ececf0;
+  color: #4f4f57;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.sonaAgentStepsList {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sonaAgentStep {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #ececf0;
+}
+
+.sonaAgentStepTitle {
+  display: block;
+  margin-bottom: 6px;
+  color: #4f4f57;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sonaAgentStep pre {
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: #17181c;
+  color: #e8edf5;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.sonaAgentStep--thinking .sonaAgentStepTitle {
+  color: #7c5cff;
+}
+
+.sonaAgentStep--tool .sonaAgentStepTitle {
+  color: #b45309;
+}
+
+.sonaAgentStep--approval .sonaAgentStepTitle {
+  color: #b45309;
+}
+
+.sonaApprovalPanel {
+  width: min(100%, 760px);
+  padding: 12px;
+  border: 1px solid #f0d39a;
+  border-radius: 8px;
+  background: #fffaf0;
+}
+
+.sonaApprovalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.sonaApprovalHeader strong {
+  color: #78350f;
+  font-size: 14px;
+}
+
+.sonaApprovalHeader span {
+  flex-shrink: 0;
+  color: #9a5b12;
+  font-size: 12px;
+}
+
+.sonaApprovalPanel pre {
+  max-height: 260px;
+  margin: 0;
+  overflow: auto;
+  color: #2f2f36;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.sonaApprovalActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.sonaAgentStep--workflow .sonaAgentStepTitle {
+  color: #0d9488;
+}
+
+#lobe-ui-theme-app .sonaChatBubble p {
+  margin: 0 0 0.75em;
+  line-height: 1.65;
+}
+
+#lobe-ui-theme-app .sonaChatBubble p:last-child {
+  margin-bottom: 0;
+}
+
+.homeHero {
+  max-width: 1084px;
+  margin: 0 auto;
+}
+
+.heroAgent {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.heroAgent strong {
+  font-size: 22px;
+}
+
+.homeHero h1,
+.homeHero p {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.7;
+}
+
+.homeHero p {
+  margin-bottom: 28px;
+}
+
+.homeShortcuts {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin: 18px 0 64px;
+}
+
+.homeShortcuts button,
+.briefHead button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: #59595f;
+  cursor: pointer;
+}
+
+.homeShortcuts button {
+  height: 36px;
+  padding: 0 16px;
+  box-shadow: 0 2px 8px rgba(20, 20, 20, 0.04);
+}
+
+.homeShortcuts button:hover,
+.briefHead button:hover {
+  border-color: #c8d6f0;
+  color: var(--accent);
+}
+
+.briefList {
+  display: grid;
+  gap: 10px;
+  width: min(100%, 1084px);
+}
+
+.briefHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  color: #77777d;
+}
+
+.briefHead strong {
+  font-size: 16px;
+}
+
+.briefHead button {
+  height: 30px;
+  padding: 0 12px;
+}
+
+.briefList > button {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 112px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.briefList > button:hover {
+  border-color: #d2d8e5;
+  box-shadow: 0 8px 28px rgba(20, 20, 20, 0.06);
+}
+
+.briefList span {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.briefList small {
+  grid-column: 2 / -1;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.chatEmpty {
+  display: grid;
+  min-height: 360px;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+}
+
+.chatEmpty strong {
+  font-size: 20px;
+}
+
+.chatEmptyHint {
+  max-width: 420px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.chatEmptyError {
+  max-width: 420px;
+  margin: 8px 0 0;
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.streaming {
+  width: fit-content;
+  margin: 8px 0 0 50px;
+  color: var(--muted);
+}
+
+/* LobeHub 主界面输入框 — https://app.lobehub.com/ */
+.sonaChatComposerDock {
+  z-index: 3;
+  flex: none;
+  padding: 0 16px 20px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.94) 28%,
+    #fff 100%
+  );
+}
+
+.sonaChatComposerShell {
+  width: min(960px, 100%);
+}
+
+.sonaChatComposerCard {
+  display: flex;
+  flex-direction: column;
+  min-height: 150px;
+  overflow: hidden;
+  border: 1px solid #e3e3e8;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow:
+    0 0 0 1px rgba(15, 23, 42, 0.02),
+    0 10px 36px rgba(15, 23, 42, 0.08);
+}
+
+.sonaChatComposerEditor {
+  width: 100%;
+  min-height: 120px;
+  flex: 1;
+  padding: 16px 16px 8px;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: transparent;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.sonaChatComposerEditor::placeholder {
+  color: #9b9ba4;
+}
+
+.sonaChatComposerEditor:focus {
+  outline: none;
+}
+
+.sonaChatComposerFoot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 12px 12px;
+}
+
+.sonaChatComposerFootLeft {
+  min-width: 0;
+  flex: 1;
+}
+
+.sonaChatComposerFootRight {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.sonaChatComposerHint {
+  color: #9b9ba4;
+}
+
+.sonaSendButton.ant-btn {
+  --send-button-size: 32px;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0;
+  border-radius: 50%;
+  box-shadow: none;
+}
+
+.sonaSendButton.ant-btn .ant-btn-icon {
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+}
+
+.sonaSendButton.ant-btn:not(:disabled):hover {
+  filter: brightness(1.04);
+}
+
+.sonaToolChip.ant-btn {
+  height: 28px;
+  padding-inline: 10px;
+  border: 1px solid #e8e8ec;
+  border-radius: 8px;
+  background: #fafafa;
+  color: #4f4f57;
+  font-size: 12px;
+}
+
+.sonaToolChip.ant-btn:hover {
+  border-color: #d8dee8;
+  background: #f3f5f8 !important;
+  color: #111116 !important;
+}
+
+@media (max-width: 720px) {
+  .sonaChatComposerHint {
+    display: none;
+  }
+
+  .sonaChatComposerFoot {
+    flex-wrap: wrap;
+  }
+}
+
+.topicPanel {
+  width: 360px;
+  min-width: 360px;
+  height: 100%;
+  overflow: auto;
+  border-left: 1px solid var(--line);
+  background: #fafafa;
+  transition: width 180ms ease, min-width 180ms ease, opacity 160ms ease;
+}
+
+.topicPanel.closed {
+  width: 0;
+  min-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.topicPanel > .ant-segmented {
+  margin: 12px;
+  width: calc(100% - 24px);
+}
+
+.panel {
+  padding: 4px 16px 16px;
+}
+
+.panelTitle,
+.quickActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.taskList,
+.listPanel {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.quickActions {
+  margin-top: 12px;
+}
+
+.taskList button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.taskList button:hover {
+  background: var(--hover);
+}
+
+.taskList button small {
+  grid-column: 1 / -1;
+  line-height: 1.45;
+}
+
+.muted,
+.lineItem small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.reportFrame {
+  width: 100%;
+  height: 460px;
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+}
+
+.lineItem {
+  display: grid;
+  gap: 4px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.profileSummary {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 4px;
+}
+
+.profileSummary span {
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.lineItem span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.activityPanel {
+  display: grid;
+  gap: 8px;
+  margin: 12px 16px 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.activityItem {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.activityItem strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.activityItem span {
+  max-height: 84px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.jsonBox {
+  min-height: 260px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #17181c;
+  color: #edf2f7;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 1180px) {
+  .topicPanel {
+    position: absolute;
+    z-index: 30;
+    right: 8px;
+    top: 56px;
+    height: calc(100svh - 64px);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: -12px 0 30px rgba(15, 23, 42, 0.12);
+  }
+}
+
+@media (max-width: 760px) {
+  .sonarShell {
+    padding: 0;
+  }
+
+  .sonaSideNav {
+    display: none;
+  }
+
+  .conversationPane {
+    border: 0;
+    border-radius: 0;
+  }
+
+  .homeCanvas,
+  .chatCanvas {
+    padding: 44px 12px 16px;
+  }
+
+  .sonaChatComposerDock {
+    padding-inline: 10px;
+    padding-block-end: 12px;
+  }
+
+  .topicPanel.open {
+    right: 0;
+    width: min(100vw, 360px);
+    min-width: min(100vw, 360px);
+  }
+}

@@ -155,6 +155,26 @@ class SessionManager:
         )
         
         return sessions[:limit]
+
+    def update_session(self, task_id: str, *, description: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """更新会话元数据。"""
+        session_data = self.load_session(task_id)
+        if not session_data:
+            return None
+
+        if description is not None:
+            session_data["description"] = description
+
+        self.save_session(task_id, session_data)
+        return self.load_session(task_id)
+
+    def delete_session(self, task_id: str) -> bool:
+        """删除会话文件。"""
+        session_file = self.stm_dir / f"{task_id}.json"
+        if not session_file.exists():
+            return False
+        session_file.unlink()
+        return True
     
     def add_message(
         self,
@@ -199,8 +219,14 @@ class SessionManager:
             msg_data["tool_call_id"] = tool_call_id
         
         session_data["messages"].append(msg_data)
-        
-        self.save_session(task_id, session_data)
+
+        final_query: Optional[str] = None
+        if role == "user":
+            user_count = sum(1 for m in session_data["messages"] if m.get("role") == "user")
+            if user_count == 1:
+                final_query = content
+
+        self.save_session(task_id, session_data, final_query=final_query)
     
     def add_token_usage(
         self,

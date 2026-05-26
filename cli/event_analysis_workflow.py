@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from tools import extract_search_terms, search_reference_insights
 from utils.session_manager import SessionManager
@@ -23,6 +23,7 @@ def run_event_analysis_workflow(
     skip_data_collect: bool = False,
     force_fresh_start: Optional[bool] = None,
     report_length: Optional[str] = None,
+    progress_callback: Optional[Any] = None,
 ) -> str:
     """Backward-compatible entry: delegates to workflow runner / pipeline."""
     return _dispatch_pipeline(
@@ -35,6 +36,7 @@ def run_event_analysis_workflow(
         skip_data_collect=skip_data_collect,
         force_fresh_start=force_fresh_start,
         report_length=report_length,
+        progress_callback=progress_callback,
     )
 
 
@@ -48,6 +50,7 @@ def run_full_report_mode(
     skip_data_collect: bool = False,
     force_fresh_start: Optional[bool] = None,
     report_length: Optional[str] = None,
+    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> str:
     """完整报告模式（供 Agent full_report 等复用）。"""
     return run_event_analysis_workflow(
@@ -59,6 +62,7 @@ def run_full_report_mode(
         skip_data_collect=skip_data_collect,
         force_fresh_start=force_fresh_start,
         report_length=report_length,
+        progress_callback=progress_callback,
     )
 
 

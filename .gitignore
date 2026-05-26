@@ -76,6 +76,14 @@ logs/
 *.log
 *.log.*
 
+# Frontend / Node
+node_modules/
+.next/
+out/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
 # Eval artifacts
 eval_results/
 

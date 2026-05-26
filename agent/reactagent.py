@@ -233,30 +233,65 @@ def _stream_mode_flow(
         existing_data_path = opts.get("existing_data_path")
         skip_data_collect = bool(opts.get("skip_data_collect", False))
         force_fresh_start = opts.get("force_fresh_start")
-        yield {"type": "tool_call", "tool_name": "full_report_mode_node", "args": {"query": user_input}, "run_id": f"mode_full_{task_id or 'na'}"}
-        report_length = str(opts.get("report_length") or "").strip() or None
-        file_url_or_path = run_full_report_mode(
-            user_query=user_input,
-            task_id=task_id or "",
-            session_manager=session_manager,
-            debug=True,
-            existing_data_path=existing_data_path,
-            skip_data_collect=skip_data_collect,
-            force_fresh_start=force_fresh_start,
-            report_length=report_length,
-        )
+        progress_queue: queue.Queue = queue.Queue()
+        result_holder: Dict[str, Any] = {"value": None, "error": None}
+
+        def on_workflow_progress(event: Dict[str, Any]) -> Any:
+            hook = opts.get("_web_progress_hook")
+            hook_result = None
+            if callable(hook):
+                hook_result = hook(event)
+            progress_queue.put(("step", dict(event)))
+            return hook_result
+
+        def run_pipeline() -> None:
+            try:
+                report_length = str(opts.get("report_length") or "").strip() or None
+                result_holder["value"] = run_full_report_mode(
+                    user_query=user_input,
+                    task_id=task_id or "",
+                    session_manager=session_manager,
+                    debug=True,
+                    existing_data_path=existing_data_path,
+                    skip_data_collect=skip_data_collect,
+                    force_fresh_start=force_fresh_start,
+                    report_length=report_length,
+                    progress_callback=on_workflow_progress,
+                )
+            except Exception as exc:  # noqa: BLE001
+                result_holder["error"] = exc
+            finally:
+                progress_queue.put(("done", None))
+
+        yield {
+            "type": "tool_call",
+            "tool_name": "full_report_mode_node",
+            "args": {"query": user_input},
+            "run_id": f"mode_full_{task_id or 'na'}",
+        }
+        worker = threading.Thread(target=run_pipeline, daemon=True)
+        worker.start()
+        while True:
+            try:
+                kind, payload = progress_queue.get(timeout=0.3)
+            except queue.Empty:
+                if not worker.is_alive():
+                    break
+                continue
+            if kind == "step":
+                yield {"type": "workflow_step", **payload}
+            elif kind == "done":
+                break
+        worker.join()
+        if result_holder["error"] is not None:
+            raise result_holder["error"]
+        file_url_or_path = result_holder["value"]
         yield {
             "type": "tool_result",
             "tool_name": "full_report_mode_node",
             "result": str(file_url_or_path or ""),
             "run_id": f"mode_full_{task_id or 'na'}",
         }
-        final_text = (
-            "完整舆情报告流程已完成。\n"
-            f"- 报告地址：{str(file_url_or_path or '未返回')}\n"
-            "- 已复用事件分析工作流节点（采集/分析/报告生成）。"
-        )
-        yield {"type": "message", "message": AIMessage(content=final_text), "message_id": f"mode_full_msg_{task_id or 'na'}"}
         return
 
 # 创建带消息历史的 Agent

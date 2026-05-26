@@ -23,6 +23,10 @@ class TaskStore:
         with self._lock:
             return self._tasks.get(task_id)
 
+    def delete(self, task_id: str) -> None:
+        with self._lock:
+            self._tasks.pop(task_id, None)
+
     def list_all(self) -> List[TaskEnvelope]:
         """Return all stored envelopes (newest last; order not guaranteed)."""
         with self._lock:

@@ -167,6 +167,10 @@ class IntentRecognizer:
 
         # 检查是否明确要求重新搜索
         is_re_search = any(p.search(query) for p in self.re_search_patterns)
+        is_public_opinion_probe = bool(
+            re.search(r"(舆情|舆论)", query)
+            and re.search(r"(有什么|有哪些|哪些|如何|怎么样|怎么回事|态势|趋势)", query)
+        )
 
         hot_keywords = []
         for pattern in self.hot_patterns:
@@ -194,6 +198,10 @@ class IntentRecognizer:
                 confidence = min(0.7 + 0.1 * len(matched_keywords), 0.95)
                 intent = "event_analysis"
                 reasoning = f"检测到舆情分析关键词: {', '.join(matched_keywords[:3])}"
+        elif is_public_opinion_probe:
+            confidence = 0.78
+            intent = "event_analysis"
+            reasoning = "检测到实体舆情探询表达，进入舆情分析流程"
         else:
             # 没有明确关键词，默认为一般查询
             confidence = 0.5

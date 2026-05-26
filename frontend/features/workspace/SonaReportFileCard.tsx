@@ -1,0 +1,86 @@
+'use client';
+
+import { ActionIcon, Block, FileTypeIcon, Flexbox, Text, Tooltip } from '@lobehub/ui';
+import { Download, ExternalLink, PanelRightOpen } from 'lucide-react';
+import type { ReportRef } from '@/features/workspace/reportRefs';
+import { reportApiPath } from '@/features/workspace/reportRefs';
+
+type SonaReportFileCardProps = {
+  report: ReportRef;
+  onOpenReport?: (taskId: string) => void;
+};
+
+async function downloadReport(url: string, fileName: string) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`下载失败 (${response.status})`);
+  const blob = await response.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  try {
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = fileName;
+    link.style.display = 'none';
+    document.body.append(link);
+    link.click();
+    link.remove();
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
+}
+
+export function SonaReportFileCard({ report, onOpenReport }: SonaReportFileCardProps) {
+  const previewUrl = report.taskId ? reportApiPath(report.taskId) : undefined;
+  const fileLabel = report.fileType.toUpperCase();
+
+  return (
+    <Block
+      align="center"
+      className="sonaReportFileCard"
+      gap={12}
+      horizontal
+      padding={12}
+      variant="outlined"
+    >
+      <FileTypeIcon filetype={report.fileType} size={40} type="file" variant="color" />
+      <Flexbox flex={1} gap={2} style={{ minWidth: 0 }}>
+        <Text ellipsis style={{ fontWeight: 600, fontSize: 14 }}>
+          {report.fileName}
+        </Text>
+        <Text style={{ color: 'var(--muted)', fontSize: 12 }}>{fileLabel} 报告</Text>
+      </Flexbox>
+      <Flexbox gap={4} horizontal>
+        {previewUrl && onOpenReport ? (
+          <Tooltip title="在侧栏打开报告">
+            <ActionIcon
+              icon={PanelRightOpen}
+              size="small"
+              onClick={() => onOpenReport(report.taskId!)}
+            />
+          </Tooltip>
+        ) : null}
+        {previewUrl ? (
+          <Tooltip title="新标签页打开">
+            <ActionIcon
+              icon={ExternalLink}
+              size="small"
+              onClick={() => window.open(previewUrl, '_blank', 'noopener,noreferrer')}
+            />
+          </Tooltip>
+        ) : null}
+        {previewUrl ? (
+          <Tooltip title="下载报告">
+            <ActionIcon
+              icon={Download}
+              size="small"
+              onClick={() => {
+                void downloadReport(previewUrl, report.fileName).catch((error) => {
+                  console.error(error);
+                });
+              }}
+            />
+          </Tooltip>
+        ) : null}
+      </Flexbox>
+    </Block>
+  );
+}

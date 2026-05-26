@@ -1,0 +1,145 @@
+import { describe, expect, it } from 'vitest';
+import { dedupeMessages, mergeSessionMessages, messagesMatch } from '@/features/workspace/mergeSessionMessages';
+import {
+  applyStreamEvent,
+  blocksFromStream,
+  buildConversationTurns,
+  isStubText,
+} from '@/features/workspace/conversationTurns';
+import type { ChatMessage } from '@/types/sona';
+
+describe('mergeSessionMessages', () => {
+  it('keeps local tail when server is behind', () => {
+    const server: ChatMessage[] = [{ role: 'user', content: 'hello' }];
+    const local: ChatMessage[] = [
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: 'world' },
+    ];
+    const merged = mergeSessionMessages(local, server);
+    expect(merged).toHaveLength(2);
+    expect(merged[1].content).toBe('world');
+  });
+
+  it('dedupes optimistic user with server user', () => {
+    const server: ChatMessage[] = [
+      { role: 'user', content: 'same question', timestamp: '2026-01-01T00:00:00Z' },
+    ];
+    const local: ChatMessage[] = [
+      { role: 'user', content: 'same question', timestamp: '2026-01-01T00:00:01Z' },
+    ];
+    const merged = mergeSessionMessages(local, server);
+    expect(merged).toHaveLength(1);
+  });
+
+  it('messagesMatch treats identical content as duplicate', () => {
+    const text = '分析 OPPO 母亲节广告文案争议舆情分析';
+    const a: ChatMessage = { role: 'user', content: text };
+    const b: ChatMessage = { role: 'user', content: text, timestamp: '2026-05-15T00:00:00Z' };
+    expect(messagesMatch(a, b)).toBe(true);
+  });
+});
+
+describe('applyStreamEvent message', () => {
+  it('preserves thinking when message content is empty', () => {
+    let blocks = applyStreamEvent([], { event: 'token', data: { accumulated: '流式片段' } });
+    blocks = applyStreamEvent(blocks, { event: 'message', data: { content: '' } });
+    expect(blocks.some((b) => b.type === 'text' && b.content === '流式片段')).toBe(true);
+  });
+
+  it('shows token events as the live answer draft', () => {
+    const blocks = applyStreamEvent([], { event: 'token', data: { accumulated: '正在生成回答' } });
+    expect(blocksFromStream(blocks).answer).toBe('正在生成回答');
+  });
+
+  it('records workflow_step events', () => {
+    const blocks = applyStreamEvent([], {
+      event: 'workflow_step',
+      data: { step: 'step1', title: 'Step1: extract', detail: '关键词已提取' },
+    });
+    expect(blocks.some((b) => b.type === 'workflow' && b.title.includes('Step1'))).toBe(true);
+  });
+
+  it('renders collect plan workflow events as visible approval content', () => {
+    const blocks = applyStreamEvent([], {
+      event: 'workflow_step',
+      data: {
+        step: 'collect_plan',
+        title: '建议搜索采集方案（等待确认）',
+        detail: '{\n  "platforms": ["微博"]\n}',
+      },
+    });
+    const live = blocksFromStream(blocks);
+    expect(blocks.some((b) => b.type === 'approval')).toBe(true);
+    expect(live.answer).toContain('建议搜索采集方案');
+    expect(live.answer).toContain('"platforms"');
+  });
+
+  it('restores persisted workflow audit messages into approval steps', () => {
+    const turns = buildConversationTurns([
+      { role: 'user', content: '近期大熊猫相关舆情事件分析' },
+      {
+        role: 'system',
+        content: JSON.stringify({
+          event: 'workflow_step',
+          step: 'collect_plan',
+          title: '建议搜索采集方案（等待确认）',
+          detail: '{\n  "return_count": 2000\n}',
+        }),
+      },
+    ]);
+    const assistant = turns.find((turn) => turn.kind === 'assistant');
+    expect(assistant?.steps.some((step) => step.kind === 'approval')).toBe(true);
+    expect(assistant?.answer).toContain('建议搜索采集方案');
+  });
+
+  it('appends tool_calls from message event', () => {
+    const blocks = applyStreamEvent([], {
+      event: 'message',
+      data: {
+        content: '',
+        tool_calls: [{ name: 'search', args: { q: 'oppo' }, id: 'tc1' }],
+      },
+    });
+    expect(blocks.some((b) => b.type === 'tool_call' && b.toolName === 'search')).toBe(true);
+  });
+});
+
+describe('buildConversationTurns', () => {
+  it('does not persist a fake loading placeholder when assistant is missing', () => {
+    const turns = buildConversationTurns([{ role: 'user', content: '问题' }]);
+    expect(turns).toHaveLength(1);
+    expect(turns[0].kind).toBe('user');
+  });
+
+  it('does not treat long analysis text as stub', () => {
+    const long =
+      'OPPO母亲节广告文案争议舆情分析：2026年5月8日左右，OPPO发布母亲节主题广告，因表述引发全网批评。';
+    expect(isStubText(long)).toBe(false);
+    const turns = buildConversationTurns([
+      { role: 'user', content: '分析' },
+      { role: 'assistant', content: long },
+    ]);
+    expect(turns.some((t) => t.kind === 'assistant' && t.answer === long)).toBe(true);
+  });
+
+  it('merges consecutive assistant turns', () => {
+    const turns = buildConversationTurns([
+      { role: 'user', content: 'q' },
+      { role: 'assistant', content: '短' },
+      { role: 'assistant', content: '更长的助手回复内容' },
+    ]);
+    const assistants = turns.filter((t) => t.kind === 'assistant');
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0].answer).toBe('更长的助手回复内容');
+  });
+});
+
+describe('dedupeMessages', () => {
+  it('removes back-to-back duplicates', () => {
+    const out = dedupeMessages([
+      { role: 'user', content: 'a' },
+      { role: 'user', content: 'a' },
+    ]);
+    expect(out).toHaveLength(1);
+  });
+});

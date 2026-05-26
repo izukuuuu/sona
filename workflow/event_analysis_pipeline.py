@@ -1439,12 +1439,32 @@ def _find_recent_reusable_csv(
     return deduped
 
 
-def _pretty_print_dict(title: str, payload: Dict[str, Any]) -> None:
+def _pretty_print_dict(
+    title: str,
+    payload: Dict[str, Any],
+    *,
+    debug: bool = False,
+    progress_callback: Optional[Any] = None,
+    step: str = "info",
+) -> Any:
+    body = json.dumps(payload, ensure_ascii=False, indent=2)[:5000]
+    from workflow.progress import emit_workflow_progress
+
+    callback_result = emit_workflow_progress(
+        progress_callback,
+        step=step,
+        title=title,
+        detail=body,
+        payload=payload if isinstance(payload, dict) else {"value": payload},
+    )
+    if not debug:
+        return callback_result
     console.print()
     console.print(f"[bold cyan]{title}[/bold cyan]")
-    console.print(f"[dim]{json.dumps(payload, ensure_ascii=False, indent=2)[:5000]}[/dim]")
+    console.print(f"[dim]{body}[/dim]")
     if len(json.dumps(payload, ensure_ascii=False)) > 5000:
         console.print("[yellow]（输出已截断）[/yellow]")
+    return callback_result
 
 
 def _write_text_file(path: Path, text: str) -> None:
@@ -2442,6 +2462,7 @@ def run_event_analysis_pipeline(
     skip_data_collect: bool = False,
     force_fresh_start: Optional[bool] = None,
     report_length: Optional[str] = None,
+    progress_callback: Optional[Any] = None,
 ) -> str:
     """
     在 CLI 中运行"4.1 舆情事件分析工作流"。
@@ -2546,11 +2567,38 @@ def run_event_analysis_pipeline(
     # 协同输入步骤需要更充分的人工输入时间：默认 45s，可用 SONA_EVENT_COLLAB_TIMEOUT_SEC 覆盖
     collab_timeout_sec = _collab_timeout(45)
 
+    from workflow.progress import emit_workflow_progress
+
+    emit_workflow_progress(
+        progress_callback,
+        step="start",
+        title="进入舆情事件分析工作流",
+        detail=f"task_id={task_id}",
+    )
     if debug:
         console.print(f"[green]🔧 进入 EventAnalysisWorkflow[/green] task_id={task_id}")
         console.print(
             f"[dim]协作模式: mode={collab_mode}, interactive={interactive_session}, enabled={collab_enabled}, timeout={collab_timeout_sec}s[/dim]"
         )
+
+    def _step(
+        step_id: str,
+        title: str,
+        detail: str = "",
+        *,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        emit_workflow_progress(
+            progress_callback,
+            step=step_id,
+            title=title,
+            detail=detail,
+            payload=payload,
+        )
+        if debug:
+            console.print(f"[bold]{title}[/bold]")
+            if detail:
+                console.print(f"[dim]{detail[:4000]}[/dim]")
 
     session_manager.add_message(task_id, "user", user_query)
     _set_session_final_query(session_manager, task_id, user_query)
@@ -2597,8 +2645,14 @@ def run_event_analysis_pipeline(
             "search_plan": best_exp.get("search_plan"),
             "collect_plan": best_exp.get("collect_plan"),
         }
-        if debug:
-            _pretty_print_dict("检测到历史相似案例（可复用经验）", preview)
+        if debug or progress_callback:
+            _pretty_print_dict(
+                "检测到历史相似案例（可复用经验）",
+                preview,
+                debug=debug,
+                progress_callback=progress_callback,
+                step="experience",
+            )
         similarity = _safe_float(best_exp.get("_similarity", 0.0), 0.0)
         if collab_enabled:
             default_use_history = similarity >= 0.16 or collab_mode == "manual"
@@ -2665,8 +2719,7 @@ def run_event_analysis_pipeline(
         suggested_collect_plan = {}
 
     # ============ 1) 搜索方案生成 ============
-    if debug:
-        console.print("[bold]Step1: extract_search_terms[/bold]")
+    _step("step1", "Step1: extract_search_terms")
 
     if not used_experience:
         step1_start = time.time()
@@ -2874,12 +2927,72 @@ def run_event_analysis_pipeline(
     )
     # #endregion debug_log_H1_search_collect_plan_generated
 
+    web_collect_plan_decision: Any = None
     if debug:
-        _pretty_print_dict("建议搜索采集方案（等待确认）", suggested_collect_plan)
+        web_collect_plan_decision = _pretty_print_dict(
+            "建议搜索采集方案（等待确认）",
+            suggested_collect_plan,
+            debug=debug,
+            progress_callback=progress_callback,
+            step="collect_plan",
+        )
 
-    if debug:
-        console.print("[bold]Step2: confirm_collect_plan[/bold]")
-    if collab_enabled:
+    _step("step2", "Step2: confirm_collect_plan")
+    if isinstance(web_collect_plan_decision, dict):
+        decision_action = str(web_collect_plan_decision.get("action") or "accept")
+        if decision_action == "abort":
+            accept = False
+        elif decision_action == "edit":
+            patch = web_collect_plan_decision.get("patch")
+            if isinstance(patch, dict):
+                allowed_keys = {
+                    "keyword_combination_mode",
+                    "boolean_strategy",
+                    "keywords_join_with",
+                    "platforms",
+                    "time_range",
+                    "return_count",
+                    "data_num_workers",
+                    "data_collect_workers",
+                    "analysis_workers",
+                    "searchWords_preview",
+                }
+                for key, value in patch.items():
+                    if key in allowed_keys:
+                        suggested_collect_plan[key] = value
+                suggested_collect_plan["platforms"] = _to_clean_str_list(
+                    suggested_collect_plan.get("platforms"),
+                    max_items=12,
+                ) or ["微博"]
+                suggested_collect_plan["searchWords_preview"] = _to_clean_str_list(
+                    suggested_collect_plan.get("searchWords_preview") or search_plan.get("searchWords"),
+                    max_items=10,
+                )
+                suggested_collect_plan["time_range"] = (
+                    _normalize_time_range_input(str(suggested_collect_plan.get("time_range") or ""))
+                    or str(search_plan.get("timeRange") or "")
+                )
+                suggested_collect_plan["return_count"] = max(
+                    200,
+                    min(_safe_int(suggested_collect_plan.get("return_count"), 2000), 10000),
+                )
+                suggested_collect_plan["data_num_workers"] = max(
+                    1,
+                    min(_safe_int(suggested_collect_plan.get("data_num_workers"), 4), 8),
+                )
+                suggested_collect_plan["data_collect_workers"] = max(
+                    1,
+                    min(_safe_int(suggested_collect_plan.get("data_collect_workers"), 3), 8),
+                )
+                suggested_collect_plan["analysis_workers"] = max(
+                    1,
+                    min(_safe_int(suggested_collect_plan.get("analysis_workers"), 2), 8),
+                )
+            accept = True
+        else:
+            decision_action = "accept"
+            accept = True
+    elif collab_enabled:
         decision_action = _prompt_collect_plan_confirmation(edited=False)
         accept = decision_action == "accept"
     else:
@@ -3056,7 +3169,7 @@ def run_event_analysis_pipeline(
         else:
             # ============ 3) 数量分配（data_num）- 仅在需要采集数据时执行 ============
             if debug:
-                console.print("[bold]Step3: data_num[/bold]")
+                _step("step3", "Step3: data_num")
             _progress_step("Step3: data_num")
 
             platforms = suggested_collect_plan.get("platforms") or ["微博"]
@@ -3531,7 +3644,7 @@ def run_event_analysis_pipeline(
 
     # ============ 5) dataset_summary ============
     if debug:
-        console.print("[bold]Step5: dataset_summary[/bold]")
+        _step("step5", "Step5: dataset_summary")
     _progress_step("Step5: dataset_summary")
 
     ds_json = _invoke_tool_to_json(dataset_summary, {"save_path": save_path})
@@ -3542,7 +3655,7 @@ def run_event_analysis_pipeline(
     # ============ 6) 统计与阶段分析 ============
     # ============ 6.1) keyword_stats（可选，失败可跳过） ============
     if debug:
-        console.print("[bold]Step6.1: keyword_stats (optional)[/bold]")
+        _step("step6.1", "Step6.1: keyword_stats (optional)")
 
     try:
         keyword_json = _invoke_tool_to_json(
@@ -3655,7 +3768,7 @@ def run_event_analysis_pipeline(
 
     # ============ 6.2) region_stats（可选，失败可跳过） ============
     if debug:
-        console.print("[bold]Step6.2: region_stats (optional)[/bold]")
+        _step("step6.2", "Step6.2: region_stats (optional)")
 
     try:
         region_json = _invoke_tool_to_json(
@@ -3681,7 +3794,7 @@ def run_event_analysis_pipeline(
 
     # ============ 6.3) author_stats（可选，失败可跳过） ============
     if debug:
-        console.print("[bold]Step6.3: author_stats (optional)[/bold]")
+        _step("step6.3", "Step6.3: author_stats (optional)")
 
     try:
         author_json = _invoke_tool_to_json(
@@ -3709,8 +3822,8 @@ def run_event_analysis_pipeline(
     timeline_enabled = _analysis_stage_enabled("timeline")
     sentiment_enabled = _analysis_stage_enabled("sentiment")
     if debug:
-        console.print(f"[bold]Step6.4: analysis_timeline ({'on' if timeline_enabled else 'off'})[/bold]")
-        console.print(f"[bold]Step7: analysis_sentiment ({'on' if sentiment_enabled else 'off'})[/bold]")
+        _step("step6.4", f"Step6.4: analysis_timeline ({'on' if timeline_enabled else 'off'})")
+        _step("step7", f"Step7: analysis_sentiment ({'on' if sentiment_enabled else 'off'})")
     _progress_advance()
     _progress_step("Step6.4-7: timeline + sentiment")
 
@@ -3857,7 +3970,7 @@ def run_event_analysis_pipeline(
 
     # ============ 6.5) channel（平台占比，生成饼图数据） ============
     if debug:
-        console.print("[bold]Step6.5: channel_distribution (optional)[/bold]")
+        _step("step6.5", "Step6.5: channel_distribution (optional)")
     try:
         calc_source = ""
         channel_counts: Dict[str, int] = {}
@@ -3913,7 +4026,7 @@ def run_event_analysis_pipeline(
     # ============ 8) 初步解读（interpretation.json） ============
     # ============ 6.6) volume_stats（可选，失败可跳过） ============
     if debug:
-        console.print("[bold]Step6.6: volume_stats (optional)[/bold]")
+        _step("step6.6", "Step6.6: volume_stats (optional)")
 
     try:
         volume_json = _invoke_tool_to_json(
@@ -3938,7 +4051,7 @@ def run_event_analysis_pipeline(
 
     # ============ 6.7) user_portrait（可选，失败可跳过） ============
     if debug:
-        console.print("[bold]Step6.7: user_portrait (optional)[/bold]")
+        _step("step6.7", "Step6.7: user_portrait (optional)")
     try:
         portrait_json = _invoke_tool_to_json(
             user_portrait,
@@ -3962,7 +4075,7 @@ def run_event_analysis_pipeline(
         )
 
     if debug:
-        console.print("[bold]Step8: generate_interpretation[/bold]")
+        _step("step8", "Step8: generate_interpretation")
 
     interp_json = _invoke_tool_to_json(
         generate_interpretation,
@@ -4013,7 +4126,7 @@ def run_event_analysis_pipeline(
 
     # ============ 9) 微博智搜预览 + 用户协同研判输入（可选） ============
     if debug:
-        console.print("[bold]Step9: weibo_aisearch + user_judgement[/bold]")
+        _step("step9", "Step9: weibo_aisearch + user_judgement")
     weibo_ref_json: Dict[str, Any] = {}
     weibo_ref_path = process_dir / "weibo_aisearch_reference.json"
     enable_weibo_ref = str(os.environ.get("SONA_REFERENCE_ENABLE_WEIBO_AISEARCH", "true")).strip().lower() in (
@@ -4115,7 +4228,7 @@ def run_event_analysis_pipeline(
 
     # ============ 10.1) Graph RAG 增强（可选，默认关闭） ============
     if debug:
-        console.print("[bold]Step10.1: graph_rag_query (enrich)[/bold]")
+        _step("step10.1", "Step10.1: graph_rag_query (enrich)")
 
     graph_rag_enabled = _is_graph_rag_enabled()
     # #region debug_log_H11_graph_rag_switch
@@ -4403,7 +4516,7 @@ def run_event_analysis_pipeline(
 
     # ============ 10.2) Wiki KB 召回快照（可选） ============
     if debug:
-        console.print("[bold]Step10.2: wiki_snapshot (optional)[/bold]")
+        _step("step10.2", "Step10.2: wiki_snapshot (optional)")
     try:
         wiki_query = _build_reference_query(user_query=user_query, search_plan=search_plan)
         wiki_query = wiki_query or (f"{search_plan.get('eventIntroduction', user_query)}".strip() or str(user_query or "").strip())
@@ -4473,7 +4586,7 @@ def run_event_analysis_pipeline(
 
     # ============ 10.3) OPRAG 知识快照（可选） ============
     if debug:
-        console.print("[bold]Step10.3: oprag_snapshot (optional)[/bold]")
+        _step("step10.3", "Step10.3: oprag_snapshot (optional)")
     try:
         oprag_query = (
             f"方法论 理论 传播机制 历史对比 事件复盘 {search_plan.get('eventIntroduction', user_query)}"
@@ -4512,7 +4625,7 @@ def run_event_analysis_pipeline(
 
     # ============ 10.4) 事件参考资料检索（reference_insights） ============
     if debug:
-        console.print("[bold]Step10.4: reference_insights (optional)[/bold]")
+        _step("step10.4", "Step10.4: reference_insights (optional)")
     try:
         ref_query = _build_reference_query(user_query=user_query, search_plan=search_plan)
         ref_json_raw = _invoke_tool_to_json(
@@ -4608,7 +4721,7 @@ def run_event_analysis_pipeline(
 
     # ============ 11) 报告生成（report_html） ============
     if debug:
-        console.print("[bold]Step11: report_html[/bold]")
+        _step("step11", "Step11: report_html")
     _progress_advance()
     _progress_step("Step11: report_html")
 
@@ -4675,6 +4788,7 @@ def run_event_analysis_pipeline(
 
     final_msg = f"已完成舆情事件分析工作流。报告：{file_url or html_file_path}"
     runtime_harness.finalize()
+    _step("done", "工作流完成", final_msg, payload={"file_url": file_url, "html_file_path": html_file_path})
     session_manager.add_message(task_id, "assistant", final_msg)
 
     console.print()

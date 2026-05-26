@@ -1,0 +1,347 @@
+from __future__ import annotations
+
+import json
+import sys
+import types
+import uuid
+from pathlib import Path
+from typing import Any
+
+from fastapi.testclient import TestClient
+
+import api.event_runner as event_runner
+import api.server as server
+from api.report_utils import extract_report_html_path
+from api.schema import AnalyzeEventRequest, TaskStatus
+from api.server import app
+from api.task_store import get_task_store
+from utils.path import ensure_task_dirs, get_task_dir
+from utils.session_manager import get_session_manager
+
+
+client = TestClient(app)
+
+
+def test_health_and_session_endpoints() -> None:
+    health = client.get("/health")
+    assert health.status_code == 200
+    assert health.json()["status"] == "ok"
+
+    created = client.post("/v1/chat/sessions", json={"initial_query": "frontend smoke"})
+    assert created.status_code == 200
+    body = created.json()
+    assert body["task_id"]
+    assert body["messages"] == []
+
+    listed = client.get("/v1/chat/sessions?limit=3")
+    assert listed.status_code == 200
+    assert isinstance(listed.json()["sessions"], list)
+
+    fetched = client.get(f"/v1/chat/sessions/{body['task_id']}")
+    assert fetched.status_code == 200
+    assert fetched.json()["task_id"] == body["task_id"]
+
+    renamed = client.patch(
+        f"/v1/chat/sessions/{body['task_id']}",
+        json={"description": "renamed frontend smoke"},
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["description"] == "renamed frontend smoke"
+
+    deleted = client.delete(f"/v1/chat/sessions/{body['task_id']}")
+    assert deleted.status_code == 200
+    assert isinstance(deleted.json()["sessions"], list)
+
+    missing = client.get(f"/v1/chat/sessions/{body['task_id']}")
+    assert missing.status_code == 404
+
+
+def test_chat_stream_syncs_report_to_task_store(monkeypatch: Any) -> None:
+    created = client.post("/v1/chat/sessions", json={"initial_query": "report sync"}).json()
+    task_id = created["task_id"]
+    report_dir = Path(".pytest_cache") / "sona_reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / f"report_{uuid.uuid4().hex}.html"
+    report_path.write_text("<html><body>demo</body></html>", encoding="utf-8")
+
+    monkeypatch.setattr("cli.router.route_query", lambda query, task_id: ("reactagent", {}))
+
+    def fake_agent_stream(*args: Any, **kwargs: Any):
+        yield {
+            "type": "tool_result",
+            "tool_name": "report_html",
+            "result": json.dumps({"html_file_path": str(report_path)}),
+            "run_id": "r1",
+        }
+        yield {"type": "message", "message": {"content": f"报告：file:///{report_path}"}}
+
+    monkeypatch.setattr("agent.reactagent.stream", fake_agent_stream)
+
+    response = client.post(
+        f"/v1/chat/sessions/{task_id}/messages:stream",
+        json={"query": "分析事件"},
+    )
+    assert response.status_code == 200
+
+    env = get_task_store().get(task_id)
+    assert env is not None
+    assert env.status == TaskStatus.SUCCEEDED
+    assert env.artifacts.report_path == str(report_path)
+
+    tasks = client.get("/v1/tasks").json()["tasks"]
+    assert any(item["task_id"] == task_id for item in tasks)
+
+    report = client.get(f"/v1/tasks/{task_id}/report")
+    assert report.status_code == 200
+    assert "demo" in report.text
+
+
+def test_report_path_extraction_supports_full_report_wrapper() -> None:
+    report_path = (Path(".pytest_cache") / "sona_reports" / f"report_{uuid.uuid4().hex}.html").resolve()
+    session_data = {
+        "messages": [
+            {
+                "role": "tool",
+                "tool_name": "full_report_mode_node",
+                "content": report_path.as_uri(),
+            }
+        ]
+    }
+
+    assert extract_report_html_path(session_data) == str(report_path)
+
+
+def test_report_path_extraction_falls_back_to_assistant_message() -> None:
+    report_path = (Path(".pytest_cache") / "sona_reports" / f"report_{uuid.uuid4().hex}.html").resolve()
+    session_data = {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": f"已完成舆情事件分析工作流。报告：{report_path.as_uri()}",
+            }
+        ]
+    }
+
+    assert extract_report_html_path(session_data) == str(report_path)
+
+
+def test_report_endpoint_localizes_legacy_sandbox_file_url() -> None:
+    task_id = get_session_manager().create_session("legacy report path")
+    ensure_task_dirs(task_id)
+    report_dir = get_task_dir(task_id) / "结果文件"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / "report_legacy.html"
+    report_path.write_text("<html><body>legacy demo</body></html>", encoding="utf-8")
+
+    legacy_url = f"file:///Users/example/sona-master/sandbox/{task_id}/结果文件/report_legacy.html"
+    get_session_manager().add_message(task_id, "assistant", f"已完成舆情事件分析工作流。报告：{legacy_url}")
+
+    report = client.get(f"/v1/tasks/{task_id}/report")
+
+    assert report.status_code == 200
+    assert "legacy demo" in report.text
+
+
+def test_chat_stream_persists_accumulated_tokens(monkeypatch: Any) -> None:
+  created = client.post("/v1/chat/sessions", json={"initial_query": "persist tokens"}).json()
+
+  monkeypatch.setattr("cli.router.route_query", lambda query, task_id: ("reactagent", {}))
+
+  def fake_agent_stream(*args: Any, **kwargs: Any):
+    yield {"type": "token", "content": "你", "accumulated": "你好，世界"}
+
+  monkeypatch.setattr("agent.reactagent.stream", fake_agent_stream)
+
+  response = client.post(
+    f"/v1/chat/sessions/{created['task_id']}/messages:stream",
+    json={"query": "你好"},
+  )
+  assert response.status_code == 200
+
+  session = client.get(f"/v1/chat/sessions/{created['task_id']}").json()
+  assert [message["role"] for message in session["messages"]] == ["user", "assistant"]
+  assert session["messages"][1]["content"] == "你好，世界"
+
+
+def test_chat_stream_sse_contract(monkeypatch: Any) -> None:
+    created = client.post("/v1/chat/sessions", json={"initial_query": "stream smoke"}).json()
+
+    def fake_stream(*, task_id: str, body: Any):
+        yield server._sse("route", {"route": "reactagent", "task_mode": "qa"})
+        yield server._sse("token", {"content": "你", "accumulated": "你"})
+        yield server._sse("message", {"content": "你好", "message_id": "m1"})
+        yield server._sse("done", {"task_id": task_id})
+
+    monkeypatch.setattr(server, "_chat_stream", fake_stream)
+    response = client.post(
+        f"/v1/chat/sessions/{created['task_id']}/messages:stream",
+        json={"query": "你好"},
+    )
+    assert response.status_code == 200
+    text = response.text
+    assert "event: token" in text
+    assert "event: message" in text
+    assert "你好" in text
+
+
+def test_agent_run_sse_contract(monkeypatch: Any) -> None:
+    created = client.post("/v1/chat/sessions", json={"initial_query": "agent run smoke"}).json()
+    task_id = created["task_id"]
+
+    monkeypatch.setattr("cli.router.route_query", lambda query, task_id: ("reactagent", {}))
+
+    def fake_agent_stream(*args: Any, **kwargs: Any):
+        yield {
+            "type": "workflow_step",
+            "step": "collect_terms",
+            "title": "提取检索词",
+            "detail": "大熊猫 舆情",
+            "payload": {"keywords": ["大熊猫"]},
+        }
+        yield {
+            "type": "tool_call",
+            "tool_name": "search",
+            "args": {"q": "大熊猫"},
+            "run_id": "tc1",
+        }
+        yield {
+            "type": "tool_result",
+            "tool_name": "search",
+            "result": "采集完成",
+            "run_id": "tc1",
+        }
+        yield {"type": "token", "content": "已", "accumulated": "已完成分析"}
+
+    monkeypatch.setattr("agent.reactagent.stream", fake_agent_stream)
+
+    created_run = client.post(
+        f"/v1/chat/sessions/{task_id}/runs",
+        json={"query": "近期大熊猫相关舆情事件分析"},
+    )
+    assert created_run.status_code == 200
+    run_id = created_run.json()["run_id"]
+
+    response = client.get(f"/v1/chat/sessions/{task_id}/runs/{run_id}/events")
+    assert response.status_code == 200
+    text = response.text
+    assert "event: agent_step_started" in text
+    assert "event: tool_call_started" in text
+    assert "event: agent_message_delta" in text
+    assert "event: run_completed" in text
+
+    envelope = client.get(f"/v1/chat/sessions/{task_id}/runs/{run_id}").json()
+    assert envelope["status"] == "succeeded"
+    assert any(event["event_type"] == "tool_call_completed" for event in envelope["events"])
+
+    session = client.get(f"/v1/chat/sessions/{task_id}").json()
+    roles = [message["role"] for message in session["messages"]]
+    assert "user" in roles
+    assert "assistant" in roles
+    assert any(message["role"] == "assistant" and message["content"] == "已完成分析" for message in session["messages"])
+
+
+def test_analyze_event_failure_is_logged(monkeypatch: Any) -> None:
+    log_dir = Path(".pytest_cache") / "sona_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"debug_{uuid.uuid4().hex}.log"
+
+    monkeypatch.setattr(event_runner, "LOG_PATH", str(log_path))
+    monkeypatch.setattr(event_runner, "route_query", lambda query, task_id: ("event", {}))
+
+    def fail_workflow(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("data_collect failed: playwright executable missing")
+
+    monkeypatch.setattr(event_runner, "run_event_analysis_workflow", fail_workflow)
+
+    envelope = event_runner.run_analyze_event(
+        AnalyzeEventRequest(query="测试事件", disable_blocking_prompts=True),
+    )
+
+    assert envelope.status == "failed"
+    assert envelope.artifacts.trace_path == str(log_path)
+    assert envelope.error is not None
+    assert "playwright executable missing" in envelope.error.error_message
+    assert log_path.exists()
+    log_text = log_path.read_text(encoding="utf-8")
+    assert "API_EVENT_WORKFLOW_FAILED" in log_text
+    assert "playwright executable missing" in log_text
+
+
+def test_wiki_and_case_endpoints(monkeypatch: Any) -> None:
+    import workflow.wiki_cli as wiki_cli
+
+    monkeypatch.setattr(
+        wiki_cli,
+        "answer_wiki_query",
+        lambda *args, **kwargs: {"answer": "wiki answer", "sources": [{"title": "source"}]},
+    )
+    monkeypatch.setattr(
+        wiki_cli,
+        "answer_case_query",
+        lambda *args, **kwargs: {"answer": "case answer", "cases": [], "comparison": ""},
+    )
+
+    created = client.post("/v1/chat/sessions", json={"initial_query": "wiki case persistence"}).json()
+
+    wiki = client.post(
+        "/v1/wiki/query",
+        json={"query": "什么是舆情反转？", "task_id": created["task_id"]},
+    )
+    assert wiki.status_code == 200
+    assert wiki.json()["answer"] == "wiki answer"
+
+    case = client.post(
+        "/v1/cases/search",
+        json={"query": "高铁服务争议", "task_id": created["task_id"]},
+    )
+    assert case.status_code == 200
+    assert case.json()["answer"] == "case answer"
+
+    session = client.get(f"/v1/chat/sessions/{created['task_id']}").json()
+    assert [message["role"] for message in session["messages"]] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert session["messages"][1]["content"] == "wiki answer"
+    assert session["messages"][3]["content"] == "case answer"
+
+
+def test_models_tools_and_monitor_contracts(monkeypatch: Any) -> None:
+    fake_tool = types.SimpleNamespace(name="fake_tool", description="描述：用于测试。输入：无")
+    monkeypatch.setitem(sys.modules, "agent.reactagent", types.SimpleNamespace(AGENT_TOOLS=[fake_tool]))
+
+    models = client.get("/v1/models")
+    assert models.status_code == 200
+    assert isinstance(models.json()["models"], list)
+
+    tools = client.get("/v1/tools")
+    assert tools.status_code == 200
+    assert tools.json()["tools"][0]["name"] == "fake_tool"
+
+    commands = client.get("/v1/commands")
+    assert commands.status_code == 200
+    payload = commands.json()["commands"]
+    assert any(item["command"] == "/event" for item in payload)
+    assert any(item["action"] == "run" and item["default_query"] == "/monitor list" for item in payload)
+
+    created = client.post(
+        "/v1/monitor/topics",
+        json={
+            "name": "测试专题",
+            "domain": "测试",
+            "keywords": ["测试"],
+            "run_initial_cycle": True,
+        },
+    )
+    assert created.status_code == 200
+    topic_id = created.json()["topic"]["id"]
+
+    status = client.get(f"/v1/monitor/topics/{topic_id}/status")
+    assert status.status_code == 200
+    assert status.json()["topic"]["id"] == topic_id
+
+    report = client.post(f"/v1/monitor/topics/{topic_id}/report", json={"period": "daily"})
+    assert report.status_code == 200
+    assert report.json()["report_path"]

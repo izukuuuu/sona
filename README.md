@@ -30,7 +30,7 @@
 - **🧠 垂类知识库增强**：支持控烟、健康、交通、大熊猫等领域包，并通过 `workflow/domain_routing.json` 自动注入优先证据
 - **🕸️ Graph RAG 可选增强**：通过 Neo4j Aura/本地 Neo4j 召回相似案例、理论框架和处置经验；连接失败时自动降级
 - **📚 案例库与专题监测**：完整报告可自动沉淀到 `opinion_analysis_kb/references/wiki/cases/`，并提供 `/case` 相似案例检索与 `/monitor` 专题快照/日报周报演示
-- **🧩 HTTP API 与轻量 GUI**：`sona serve` 提供 FastAPI；`streamlit_app.py` 提供 **分析员控制台**（仪表盘 + 多页任务/报告/经典会话）
+- **🧩 HTTP API 与轻量 GUI**：`sona serve` 提供 FastAPI；`frontend/` 提供 Next.js 分析工作台；`streamlit_app.py` 保留多页控制台
 - **📊 报告质量增强**：时间线证据/影响标签、情绪结构、四阶段行动清单、热点风险分级与案例候选输出
 
 ### 支持的模型提供商
@@ -382,9 +382,38 @@ sona serve --host 127.0.0.1 --port 8765
 # 探活
 curl http://127.0.0.1:8765/health
 
-# 终端 2：启动 Streamlit 多页 GUI（需安装 streamlit）
+# 终端 2A：启动 Next.js 前端（推荐）
+npm --prefix frontend install
+npm --prefix frontend run dev
+
+# 终端 2B：或启动 Streamlit 多页 GUI（保留入口）
 streamlit run streamlit_app.py
 ```
+
+Next.js 前端访问地址：`http://127.0.0.1:3000`。
+
+注意：`server.py` / `api.server:app` 不会由前端自动启动；必须先运行 `sona serve`。Next.js 只通过 BFF 代理访问后端 API。若后端端口不是 `8765`，在 `frontend/.env.local` 设置：
+
+```env
+SONA_API_BASE=http://127.0.0.1:8765
+```
+
+#### Next.js 分析工作台是什么
+
+`frontend/` 是 React + Next.js App Router 前端，页面只访问 `/api/sona/...`，由 Next.js Route Handler 代理到 `sona serve` 的 FastAPI。它支持：
+
+| 能力 | 对应 API |
+|------|----------|
+| 会话创建 / 恢复 | `POST /v1/chat/sessions`、`GET /v1/chat/sessions` |
+| 普通对话流式输出 | `POST /v1/chat/sessions/{task_id}/messages:stream` |
+| `/event` 事件分析 | `POST /v1/analyze-event` |
+| `/wiki` / `/wiki-approve` | `POST /v1/wiki/query`、`POST /v1/wiki/approve` |
+| `/case` 案例检索 | `POST /v1/cases/search` |
+| `/hot` 热点态势 | `POST /v1/hot/run` |
+| `/monitor` 专题监测 | `GET/POST /v1/monitor/...` |
+| `/models` / `/tools` | `GET /v1/models`、`GET /v1/tools` |
+
+`/set`、`/compress`、`/clear`、`/exit` 属于 CLI 管理或生命周期指令，前端 v1 不在聊天输入中执行。
 
 #### 分析员控制台（Streamlit）是什么
 
@@ -404,6 +433,7 @@ UI 采用与 BettaFish「微舆」类似的 **高对比、硬边框** 风格；�
 | 变量 | 说明 |
 |------|------|
 | `API_BASE` | Streamlit 访问的 API 根地址，默认 `http://127.0.0.1:8765` |
+| `SONA_API_BASE` | Next.js BFF 访问的 FastAPI 根地址，默认 `http://127.0.0.1:8765` |
 | `SONA_API_CORS_ORIGINS` | API 的 CORS 白名单（见 `docs/api_design.md`） |
 | `.env` 内模型与采集 Key | 与 CLI 相同；缺省则事件分析或采集会失败 |
 
@@ -412,11 +442,15 @@ UI 采用与 BettaFish「微舆」类似的 **高对比、硬边框** 风格；�
 主要 API：
 
 - `GET /health`：服务探活
+- `POST /v1/chat/sessions`：创建前端会话
+- `POST /v1/chat/sessions/{task_id}/messages:stream`：流式对话与自动路由
 - `POST /v1/analyze-event`：同步执行一次事件分析，返回 `task_id` 与报告路径
+- `POST /v1/wiki/query`、`POST /v1/cases/search`：知识库问答与案例检索
+- `POST /v1/hot/run`、`GET/POST /v1/monitor/...`：热点与专题监测
 - `GET /v1/tasks`：查看当前 API 进程内存中的任务
 - `GET /v1/tasks/{task_id}/report`：返回 HTML 报告
 
-更多约定见 `docs/api_design.md` 和 `docs/gui_decision.md`。
+更多约定见 `docs/api_design.md`、`docs/gui_decision.md` 和 `docs/frontend_next.md`。
 
 **控制台 / 新建任务常见问题**
 

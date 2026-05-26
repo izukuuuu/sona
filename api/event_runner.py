@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
+import traceback
+from pathlib import Path
 
 from cli.event_analysis_workflow import run_event_analysis_workflow
 from cli.router import route_query
 from utils.path import ensure_task_dirs, get_task_dir
 from utils.session_manager import get_session_manager
+from workflow.telemetry import append_ndjson_log
 
 from api.report_utils import extract_report_html_path
 from api.schema import (
@@ -20,6 +24,10 @@ from api.schema import (
     TaskEnvelope,
     TaskStatus,
 )
+
+_ROOT = Path(__file__).resolve().parents[1]
+LOG_PATH = os.getenv("SONA_DEBUG_LOG_PATH", str(_ROOT / ".cursor" / "debug.log"))
+LOGGER = logging.getLogger(__name__)
 
 
 def run_analyze_event(body: AnalyzeEventRequest) -> TaskEnvelope:
@@ -65,11 +73,34 @@ def run_analyze_event(body: AnalyzeEventRequest) -> TaskEnvelope:
                 skip_data_collect=skip_data_collect,
             )
         except Exception as exc:  # noqa: BLE001 — surface to API client
+            error_message = str(exc)
+            LOGGER.exception("analyze-event workflow failed task_id=%s: %s", task_id, error_message)
+            try:
+                Path(LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            append_ndjson_log(
+                log_path=LOG_PATH,
+                run_id=task_id,
+                hypothesis_id="API_EVENT_WORKFLOW_FAILED",
+                location="api/event_runner.py:run_analyze_event",
+                message="POST /v1/analyze-event 工作流失败",
+                data={
+                    "task_id": task_id,
+                    "query": body.query,
+                    "error_type": type(exc).__name__,
+                    "error_message": error_message,
+                    "traceback": traceback.format_exc(),
+                },
+            )
             return TaskEnvelope(
                 task_id=task_id,
                 status=TaskStatus.FAILED,
-                artifacts=TaskArtifacts(sandbox_dir=str(get_task_dir(task_id))),
-                error=ApiError(error_code=ERROR_WORKFLOW, error_message=str(exc)),
+                artifacts=TaskArtifacts(
+                    trace_path=LOG_PATH,
+                    sandbox_dir=str(get_task_dir(task_id)),
+                ),
+                error=ApiError(error_code=ERROR_WORKFLOW, error_message=error_message),
             )
 
         session_data = manager.load_session(task_id) or {}
@@ -77,6 +108,7 @@ def run_analyze_event(body: AnalyzeEventRequest) -> TaskEnvelope:
         stm_file = manager.stm_dir / f"{task_id}.json"
         artifacts = TaskArtifacts(
             report_path=report_path,
+            trace_path=LOG_PATH,
             sandbox_dir=str(get_task_dir(task_id)),
             session_hint=str(stm_file),
         )

@@ -69,8 +69,21 @@ if submitted:
                     result = r.json()
                     task_id = result.get("task_id", "")
                     st.session_state.current_task_id = task_id
-                    st.success("任务已完成（同步），正在打开报告页…")
-                    st.switch_page("pages/03_报告查看.py")
+                    status = str(result.get("status", ""))
+                    if status == "succeeded":
+                        st.success("任务已完成（同步），正在打开报告页…")
+                        st.switch_page("pages/03_报告查看.py")
+                    elif status == "failed":
+                        err = result.get("error") if isinstance(result, dict) else None
+                        msg = ""
+                        if isinstance(err, dict):
+                            msg = str(err.get("error_message", "") or "")
+                        st.error("任务执行失败")
+                        if msg:
+                            st.code(msg)
+                        st.caption(f"任务 ID: `{task_id}`，可到「任务状态」查看详情。")
+                    else:
+                        st.info(f"任务状态：{status or '未知'}")
                 else:
                     st.error(f"HTTP {r.status_code}: {r.text[:2000]}")
             except Exception as exc:
