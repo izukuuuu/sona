@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterable
 
@@ -79,12 +80,15 @@ v1_router = APIRouter(prefix="/v1", tags=["workflows"])
 def _session_envelope(data: Dict[str, Any]) -> SessionEnvelope:
     """Normalize loose session JSON into the public session shape."""
     return SessionEnvelope(
+        schema_version=int(data.get("schema_version") or 3),
         task_id=str(data.get("task_id") or ""),
         created_at=str(data.get("created_at") or ""),
         updated_at=str(data.get("updated_at") or ""),
+        status=str(data.get("status") or "active"),
         description=str(data.get("description") or ""),
         initial_query=str(data.get("initial_query") or ""),
         messages=data.get("messages") if isinstance(data.get("messages"), list) else [],
+        agent_events=data.get("agent_events") if isinstance(data.get("agent_events"), list) else [],
         token_usage=data.get("token_usage") if isinstance(data.get("token_usage"), dict) else {},
     )
 
@@ -181,6 +185,57 @@ def _execution_plan_steps(route_decision: str, route_data: Dict[str, Any]) -> li
     return steps
 
 
+def _research_phase(step: str, title: str) -> str:
+    text = f"{step} {title}".lower()
+    if "collect_plan" in text or "confirm" in text:
+        return "approval"
+    if "extract" in text or "step1" in text or "search_terms" in text:
+        return "plan"
+    if "data_num" in text or "data_collect" in text or "step3" in text or "step4" in text:
+        return "search"
+    if "dataset" in text or "stats" in text or "timeline" in text or "sentiment" in text:
+        return "analyze"
+    if "interpretation" in text or "rag" in text or "wiki" in text or "oprag" in text:
+        return "synthesize"
+    if "report" in text or "done" in text:
+        return "report"
+    return "research"
+
+
+def _research_progress_payload(progress_event: Dict[str, Any]) -> Dict[str, Any]:
+    step = str(progress_event.get("step") or "")
+    title = str(progress_event.get("title") or "")
+    payload = progress_event.get("payload") if isinstance(progress_event.get("payload"), dict) else {}
+    phase = str(payload.get("phase") or _research_phase(step, title))
+    status = "completed" if step == "done" else "running"
+    return {
+        "kind": "deep_research_progress",
+        "phase": phase,
+        "step": step,
+        "status": status,
+        "detail": str(progress_event.get("detail") or ""),
+        "payload": payload,
+    }
+
+
+def _approval_plugin_payload(event_id: str, title: str, detail: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "toolCallId": event_id,
+        "apiName": "confirm_collect_plan",
+        "identifier": "sona.deep_research",
+        "type": "builtin",
+        "arguments": json.dumps(payload, ensure_ascii=False),
+        "state": {"status": "pending"},
+        "intervention": {
+            "status": "pending",
+            "title": title,
+            "prompt": detail,
+            "actions": ["accept", "edit", "abort"],
+            "payload": payload,
+        },
+    }
+
+
 def _sync_session_to_task_store(
     task_id: str,
     *,
@@ -198,11 +253,7 @@ def _sync_session_to_task_store(
 
 
 def _persist_agent_event(task_id: str, event: Dict[str, Any]) -> None:
-    get_session_manager().add_message(
-        task_id,
-        "system",
-        json.dumps({"event": "agent_run_event", **event}, ensure_ascii=False),
-    )
+    get_session_manager().add_agent_event(task_id, {"event": "agent_run_event", **event})
 
 
 def _agent_run_event_frame(record: AgentRunRecord, event: Dict[str, Any]) -> str:
@@ -211,6 +262,20 @@ def _agent_run_event_frame(record: AgentRunRecord, event: Dict[str, Any]) -> str
     payload.setdefault("task_id", record.task_id)
     payload.setdefault("turn_id", record.turn_id)
     return _sse(str(payload.get("event_type") or "agent_event"), payload)
+
+
+def _previous_messages_before_query(session_data: Dict[str, Any], query: str) -> list[Any]:
+    """Return chat history without the current user query just persisted for the run."""
+    normalized_query = query.strip()
+    messages = session_data.get("messages") if isinstance(session_data.get("messages"), list) else []
+    for index in range(len(messages) - 1, -1, -1):
+        item = messages[index]
+        if not isinstance(item, dict) or item.get("role") != "user":
+            continue
+        if str(item.get("content") or "").strip() == normalized_query:
+            session_data = {**session_data, "messages": [*messages[:index], *messages[index + 1 :]]}
+        break
+    return messages_from_session_data(session_data)
 
 
 def _append_agent_event(
@@ -231,6 +296,13 @@ def _append_agent_event(
         payload=payload or {},
     )
     data = event.model_dump(mode="json")
+    event_id = str(data.get("event_id") or "")
+    plugin = data.get("payload", {}).get("plugin") if isinstance(data.get("payload"), dict) else None
+    if isinstance(plugin, dict) and plugin.get("toolCallId") == "__event_id__":
+        plugin["toolCallId"] = event_id
+        intervention = plugin.get("intervention")
+        if isinstance(intervention, dict):
+            intervention.setdefault("approvalEventId", event_id)
     _persist_agent_event(record.task_id, data)
     event_queue.put(data)
     return data
@@ -247,9 +319,15 @@ def _agent_run_stream(record: AgentRunRecord) -> Iterable[str]:
     manager = get_session_manager()
 
     if record.started:
-        for event in record.events:
-            yield _agent_run_event_frame(record, event.model_dump(mode="json"))
-        return
+        replay_index = 0
+        while True:
+            while replay_index < len(record.events):
+                event = record.events[replay_index]
+                replay_index += 1
+                yield _agent_run_event_frame(record, event.model_dump(mode="json"))
+            if record.finished:
+                return
+            time.sleep(0.2)
 
     record.started = True
 
@@ -324,7 +402,15 @@ def _agent_run_stream(record: AgentRunRecord) -> Iterable[str]:
                     status="pending",
                     title=title or "建议搜索采集方案（等待确认）",
                     detail=str(progress_event.get("detail") or ""),
-                    payload=payload,
+                    payload={
+                        **payload,
+                        "plugin": _approval_plugin_payload(
+                            "__event_id__",
+                            title or "建议搜索采集方案（等待确认）",
+                            str(progress_event.get("detail") or ""),
+                            payload,
+                        ),
+                    },
                 )
                 record.status = AgentRunStatus.WAITING_APPROVAL
                 record.pending_approval_id = str(approval.get("event_id") or "")
@@ -345,7 +431,18 @@ def _agent_run_stream(record: AgentRunRecord) -> Iterable[str]:
                         status="aborted",
                         title="采集方案已终止",
                         detail="用户终止了本次工作流。",
-                        payload={"approval_event_id": approval_event_id, "action": action},
+                        payload={
+                            "approval_event_id": approval_event_id,
+                            "action": action,
+                            "plugin": {
+                                "toolCallId": approval_event_id,
+                                "apiName": "confirm_collect_plan",
+                                "identifier": "sona.deep_research",
+                                "type": "builtin",
+                                "state": {"status": "aborted"},
+                                "intervention": {"status": "aborted", "action": action},
+                            },
+                        },
                     )
                     raise RuntimeError("Agent run aborted by user")
                 if action == "edit":
@@ -365,6 +462,18 @@ def _agent_run_stream(record: AgentRunRecord) -> Iterable[str]:
                         "approval_event_id": approval_event_id,
                         "action": action,
                         "patch": decision.get("patch") if isinstance(decision.get("patch"), dict) else {},
+                        "plugin": {
+                            "toolCallId": approval_event_id,
+                            "apiName": "confirm_collect_plan",
+                            "identifier": "sona.deep_research",
+                            "type": "builtin",
+                            "state": {"status": "success"},
+                            "intervention": {
+                                "status": "accepted" if action == "accept" else "edited",
+                                "action": action,
+                                "patch": decision.get("patch") if isinstance(decision.get("patch"), dict) else {},
+                            },
+                        },
                     },
                 )
                 return {"action": action, "patch": decision.get("patch") if isinstance(decision.get("patch"), dict) else {}}
@@ -372,7 +481,7 @@ def _agent_run_stream(record: AgentRunRecord) -> Iterable[str]:
             workflow_options["_web_progress_hook"] = approval_hook
 
             session_data = manager.load_session(record.task_id) or {}
-            previous_messages = messages_from_session_data(session_data)
+            previous_messages = _previous_messages_before_query(session_data, record.query)
             assistant_persisted = False
             for item in agent_stream(
                 record.query,
@@ -393,7 +502,7 @@ def _agent_run_stream(record: AgentRunRecord) -> Iterable[str]:
                     continue
                 item_type = str(item.get("type") or "")
                 if item_type == "token":
-                    accumulated = str(item.get("accumulated") or "").strip()
+                    accumulated = str(item.get("accumulated") or "")
                     if accumulated:
                         streamed_content = accumulated
                     elif item.get("content"):
@@ -422,6 +531,20 @@ def _agent_run_stream(record: AgentRunRecord) -> Iterable[str]:
                             detail=content,
                         )
                 elif item_type == "tool_call":
+                    tool_call_id = str(item.get("run_id") or "")
+                    if tool_call_id:
+                        manager.add_message(
+                            record.task_id,
+                            "assistant",
+                            "",
+                            tool_calls=[
+                                {
+                                    "name": str(item.get("tool_name") or "unknown"),
+                                    "args": item.get("args", {}),
+                                    "id": tool_call_id,
+                                }
+                            ],
+                        )
                     _append_agent_event(
                         record,
                         event_queue,
@@ -453,6 +576,16 @@ def _agent_run_stream(record: AgentRunRecord) -> Iterable[str]:
                         payload={"tool_name": item.get("tool_name", ""), "result": result, "run_id": item.get("run_id", "")},
                     )
                 elif item_type == "workflow_step":
+                    research_payload = _research_progress_payload(item)
+                    _append_agent_event(
+                        record,
+                        event_queue,
+                        AgentEventType.RESEARCH_PROGRESS,
+                        status=str(research_payload.get("status") or "running"),
+                        title=str(item.get("title") or "深度研究进度"),
+                        detail=str(item.get("detail") or ""),
+                        payload=research_payload,
+                    )
                     _append_agent_event(
                         record,
                         event_queue,
@@ -630,6 +763,20 @@ def _chat_stream(
                     },
                 )
             elif item_type == "tool_call":
+                tool_call_id = str(item.get("run_id") or "")
+                if tool_call_id:
+                    manager.add_message(
+                        task_id,
+                        "assistant",
+                        "",
+                        tool_calls=[
+                            {
+                                "name": str(item.get("tool_name") or "unknown"),
+                                "args": item.get("args", {}),
+                                "id": tool_call_id,
+                            }
+                        ],
+                    )
                 yield _sse(
                     "tool_call",
                     {
@@ -656,7 +803,7 @@ def _chat_stream(
                     },
                 )
             elif item_type == "token":
-                accumulated = str(item.get("accumulated") or "").strip()
+                accumulated = str(item.get("accumulated") or "")
                 if accumulated:
                     streamed_content = accumulated
                 elif item.get("content"):

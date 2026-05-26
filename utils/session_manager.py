@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from utils.session_contract import SESSION_SCHEMA_VERSION, append_agent_event, normalize_session_data
 from utils.path import ensure_memory_dirs, get_stm_dir
 
 
@@ -30,12 +31,15 @@ class SessionManager:
         """
         task_id = str(uuid.uuid4())
         session_data = {
+            "schema_version": SESSION_SCHEMA_VERSION,
             "task_id": task_id,
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
+            "status": "active",
             "description": f"初始对话：{initial_query}",
             "initial_query": initial_query,
             "messages": [],
+            "agent_events": [],
             # harness 级可进化记忆（与 messages 分离，便于审计/回滚/灰度）
             # - session_prefs: 会话记忆（临时偏好，例如 wiki style/topk/weibo 开关等）
             # - notes: 可选的结构化标注（例如用户偏好、约束、审阅结论）
@@ -68,6 +72,7 @@ class SessionManager:
             session_data: 会话数据
             final_query: 最终查询（用于更新描述）
         """
+        session_data = normalize_session_data(session_data)
         session_data["updated_at"] = datetime.now().isoformat()
         
         # 如果提供了最终查询，更新描述
@@ -124,7 +129,7 @@ class SessionManager:
             return None
         
         with open(session_file, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            return normalize_session_data(json.load(f))
     
     def list_sessions(self, limit: int = 5) -> List[Dict[str, Any]]:
         """
@@ -142,7 +147,7 @@ class SessionManager:
         for session_file in self.stm_dir.glob("*.json"):
             try:
                 with open(session_file, 'r', encoding='utf-8') as f:
-                    session_data = json.load(f)
+                    session_data = normalize_session_data(json.load(f))
                     sessions.append(session_data)
             except Exception:
                 # 跳过损坏的文件
@@ -227,6 +232,13 @@ class SessionManager:
                 final_query = content
 
         self.save_session(task_id, session_data, final_query=final_query)
+
+    def add_agent_event(self, task_id: str, event: Dict[str, Any]) -> None:
+        """Append a UI/runtime event outside canonical model messages."""
+        session_data = self.load_session(task_id)
+        if not session_data:
+            return
+        self.save_session(task_id, append_agent_event(session_data, event))
     
     def add_token_usage(
         self,

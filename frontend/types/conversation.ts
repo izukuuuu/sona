@@ -1,10 +1,11 @@
 /** One step inside an assistant turn (collapsed by default). */
 export type AgentStep = {
   id: string;
-  kind: 'tool' | 'thinking' | 'route' | 'compression' | 'note' | 'approval' | 'workflow';
+  kind: 'tool' | 'thinking' | 'route' | 'compression' | 'note' | 'approval' | 'workflow' | 'research';
   title: string;
   content: string;
-  status?: 'pending' | 'approved' | 'rejected' | 'recorded';
+  status?: 'pending' | 'approved' | 'rejected' | 'recorded' | 'running' | 'completed' | 'failed';
+  phase?: string;
   payload?: Record<string, unknown>;
   runId?: string;
   approvalEventId?: string;
@@ -34,6 +35,15 @@ export type TurnBlock =
   | { type: 'text'; content: string }
   | { type: 'tool_call'; toolName: string; args: unknown; callId?: string }
   | { type: 'tool_result'; toolName: string; content: string; callId?: string }
+  | {
+      type: 'research';
+      step: string;
+      title: string;
+      content: string;
+      phase?: string;
+      status?: 'running' | 'completed' | 'failed';
+      payload?: Record<string, unknown>;
+    }
   | {
       type: 'approval';
       title?: string;

@@ -7,6 +7,7 @@ import warnings
 from typing import Any, List, Tuple, Optional
 from langchain_core.messages import AIMessage, ToolMessage, HumanMessage, BaseMessage, ToolCall, SystemMessage
 from model.factory import get_tools_model
+from utils.session_contract import normalize_session_data
 
 
 def messages_from_session_data(session_data: dict) -> List[BaseMessage]:
@@ -17,6 +18,7 @@ def messages_from_session_data(session_data: dict) -> List[BaseMessage]:
     - AIMessage.tool_calls 使用 ToolCall 对象列表
     - ToolMessage 只依赖 tool_call_id，不需要 name 参数
     """
+    session_data = normalize_session_data(session_data)
     messages: List[BaseMessage] = []
 
     for i, msg_data in enumerate(session_data.get("messages", [])):

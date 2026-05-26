@@ -2,19 +2,24 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
+import time
 import types
 import uuid
 from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
+from langchain_core.messages import AIMessage, ToolMessage
 
 import api.event_runner as event_runner
 import api.server as server
 from api.report_utils import extract_report_html_path
 from api.schema import AnalyzeEventRequest, TaskStatus
 from api.server import app
+from api.agent_run_store import get_agent_run_store
 from api.task_store import get_task_store
+from utils.message_utils import messages_from_session_data
 from utils.path import ensure_task_dirs, get_task_dir
 from utils.session_manager import get_session_manager
 
@@ -225,12 +230,18 @@ def test_agent_run_sse_contract(monkeypatch: Any) -> None:
     assert response.status_code == 200
     text = response.text
     assert "event: agent_step_started" in text
+    assert "event: research_progress" in text
     assert "event: tool_call_started" in text
     assert "event: agent_message_delta" in text
     assert "event: run_completed" in text
 
     envelope = client.get(f"/v1/chat/sessions/{task_id}/runs/{run_id}").json()
     assert envelope["status"] == "succeeded"
+    assert any(
+        event["event_type"] == "research_progress"
+        and event["payload"]["kind"] == "deep_research_progress"
+        for event in envelope["events"]
+    )
     assert any(event["event_type"] == "tool_call_completed" for event in envelope["events"])
 
     session = client.get(f"/v1/chat/sessions/{task_id}").json()
@@ -238,6 +249,88 @@ def test_agent_run_sse_contract(monkeypatch: Any) -> None:
     assert "user" in roles
     assert "assistant" in roles
     assert any(message["role"] == "assistant" and message["content"] == "已完成分析" for message in session["messages"])
+
+
+def test_agent_run_archived_session_restores_tool_context(monkeypatch: Any) -> None:
+    created = client.post("/v1/chat/sessions", json={"initial_query": "tool context"}).json()
+    task_id = created["task_id"]
+    captured: dict[str, Any] = {}
+
+    monkeypatch.setattr("cli.router.route_query", lambda query, task_id: ("reactagent", {}))
+
+    def fake_agent_stream(*args: Any, **kwargs: Any):
+        captured["previous_messages"] = kwargs.get("previous_messages")
+        yield {
+            "type": "tool_call",
+            "tool_name": "search",
+            "args": {"q": "大熊猫"},
+            "run_id": "tool-1",
+        }
+        yield {
+            "type": "tool_result",
+            "tool_name": "search",
+            "result": "采集完成",
+            "run_id": "tool-1",
+        }
+        yield {"type": "token", "content": "完成", "accumulated": "完成"}
+
+    monkeypatch.setattr("agent.reactagent.stream", fake_agent_stream)
+
+    run = client.post(
+        f"/v1/chat/sessions/{task_id}/runs",
+        json={"query": "用工具查一下大熊猫"},
+    ).json()
+    response = client.get(f"/v1/chat/sessions/{task_id}/runs/{run['run_id']}/events")
+    assert response.status_code == 200
+
+    assert captured["previous_messages"] == []
+
+    session = client.get(f"/v1/chat/sessions/{task_id}").json()
+    restored = messages_from_session_data(session)
+    assert any(isinstance(message, AIMessage) and message.tool_calls for message in restored)
+    assert any(isinstance(message, ToolMessage) and message.tool_call_id == "tool-1" for message in restored)
+
+
+def test_agent_run_events_reconnect_waits_for_live_events() -> None:
+    created = client.post("/v1/chat/sessions", json={"initial_query": "reconnect"}).json()
+    run = client.post(
+        f"/v1/chat/sessions/{created['task_id']}/runs",
+        json={"query": "保持连接"},
+    ).json()
+    record = get_agent_run_store().get(run["run_id"])
+    assert record is not None
+    record.started = True
+    record.add_event("agent_step_started", status="running", title="已开始", detail="回放事件")
+
+    def finish_run() -> None:
+        time.sleep(0.05)
+        record.add_event("run_completed", status="succeeded", title="完成", detail="实时补到")
+        record.finished = True
+
+    thread = threading.Thread(target=finish_run)
+    thread.start()
+    response = client.get(f"/v1/chat/sessions/{created['task_id']}/runs/{run['run_id']}/events")
+    thread.join(timeout=2)
+
+    assert response.status_code == 200
+    assert "event: agent_step_started" in response.text
+    assert "event: run_completed" in response.text
+    assert "实时补到" in response.text
+
+
+def test_approval_plugin_payload_matches_lobe_intervention_shape() -> None:
+    payload = server._approval_plugin_payload(  # noqa: SLF001
+        "approval-1",
+        "建议搜索采集方案（等待确认）",
+        "请确认是否执行",
+        {"platforms": ["微博"]},
+    )
+
+    assert payload["toolCallId"] == "approval-1"
+    assert payload["identifier"] == "sona.deep_research"
+    assert payload["intervention"]["status"] == "pending"
+    assert payload["intervention"]["actions"] == ["accept", "edit", "abort"]
+    assert payload["intervention"]["payload"]["platforms"] == ["微博"]
 
 
 def test_analyze_event_failure_is_logged(monkeypatch: Any) -> None:

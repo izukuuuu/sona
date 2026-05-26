@@ -32,6 +32,7 @@ class AgentEventType(StrEnum):
     """Canonical frontend Agent event names."""
 
     AGENT_MESSAGE_DELTA = "agent_message_delta"
+    RESEARCH_PROGRESS = "research_progress"
     AGENT_STEP_STARTED = "agent_step_started"
     AGENT_STEP_UPDATED = "agent_step_updated"
     AGENT_STEP_COMPLETED = "agent_step_completed"
@@ -110,12 +111,15 @@ class SessionEnvelope(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
+    schema_version: int = Field(default=3)
     task_id: str
     created_at: str = ""
     updated_at: str = ""
+    status: str = "active"
     description: str = ""
     initial_query: str = ""
     messages: List[Dict[str, Any]] = Field(default_factory=list)
+    agent_events: List[Dict[str, Any]] = Field(default_factory=list)
     token_usage: Dict[str, Any] = Field(default_factory=dict)
 
 

@@ -1,5 +1,8 @@
 const DEFAULT_SONA_API_BASE = 'http://127.0.0.1:8765';
 
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 type RouteContext = {
   params: Promise<{ path: string[] }>;
 };
@@ -30,6 +33,7 @@ async function proxy(request: Request, context: RouteContext) {
     const responseHeaders = new Headers(upstream.headers);
     responseHeaders.delete('content-encoding');
     responseHeaders.delete('transfer-encoding');
+    responseHeaders.delete('content-length');
 
     return new Response(upstream.body, {
       status: upstream.status,

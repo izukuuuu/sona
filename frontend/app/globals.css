@@ -663,6 +663,93 @@ textarea {
   color: #0d9488;
 }
 
+.sonaResearchPanel {
+  width: min(100%, 760px);
+  margin-bottom: 8px;
+  padding: 12px;
+  border: 1px solid #d9e2f1;
+  border-radius: 8px;
+  background: #f7faff;
+}
+
+.sonaResearchHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: #22324a;
+}
+
+.sonaResearchHeader strong {
+  font-size: 14px;
+}
+
+.sonaResearchHeader span {
+  margin-left: auto;
+  color: #667085;
+  font-size: 12px;
+}
+
+.sonaResearchList {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sonaResearchItem {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.sonaResearchDot {
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: #4f7cff;
+}
+
+.sonaResearchItem--completed .sonaResearchDot {
+  background: #16a34a;
+}
+
+.sonaResearchItem--failed .sonaResearchDot {
+  background: var(--danger);
+}
+
+.sonaResearchTitle {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.sonaResearchTitle strong {
+  min-width: 0;
+  color: #2f3645;
+  font-size: 13px;
+}
+
+.sonaResearchTitle span {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #e9effb;
+  color: #43526a;
+  font-size: 11px;
+}
+
+.sonaResearchItem p {
+  margin: 2px 0 0;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 #lobe-ui-theme-app .sonaChatBubble p {
   margin: 0 0 0.75em;
   line-height: 1.65;

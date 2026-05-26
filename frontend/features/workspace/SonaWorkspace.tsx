@@ -545,6 +545,10 @@ export function SonaWorkspace() {
               if (event.event_type === 'agent_step_completed' && event.payload?.route) {
                 setRouteStatus(`${String(event.payload.route || '')} · ${String(event.payload.task_mode || '')}`);
               }
+              if (event.event_type === 'research_progress') {
+                setRouteStatus('深度研究中');
+                pushActivity(event.title || '深度研究进度', event.detail || '');
+              }
               if (event.event_type === 'approval_requested') {
                 setRouteStatus('等待确认');
                 pushActivity(event.title || '等待确认', event.detail || '');

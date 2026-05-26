@@ -9,25 +9,35 @@ export type ChatToolCall = {
   args?: unknown;
   id?: string;
   tool_call_id?: string;
+  type?: string;
   function?: { name?: string; arguments?: unknown };
+  identifier?: string;
+  apiName?: string;
 };
 
 export type ChatMessage = {
+  id?: string;
   role: 'user' | 'assistant' | 'tool' | 'system';
   content: string;
   timestamp?: string;
+  parent_id?: string;
   tool_name?: string;
   tool_call_id?: string;
   tool_calls?: ChatToolCall[];
+  tools?: ChatToolCall[];
+  plugin?: Record<string, unknown>;
 };
 
 export type SessionEnvelope = {
+  schema_version?: number;
   task_id: string;
   created_at?: string;
   updated_at?: string;
+  status?: string;
   description?: string;
   initial_query?: string;
   messages: ChatMessage[];
+  agent_events?: AgentRunEvent[];
   token_usage?: Record<string, unknown>;
 };
 
@@ -78,6 +88,7 @@ export type AgentRunStatus =
 
 export type AgentEventType =
   | 'agent_message_delta'
+  | 'research_progress'
   | 'agent_step_started'
   | 'agent_step_updated'
   | 'agent_step_completed'

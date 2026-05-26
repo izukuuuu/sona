@@ -3,7 +3,7 @@
 import type { AgentStep, ConversationTurn } from '@/types/conversation';
 import { Button } from 'antd';
 import { ChatList, type ChatMessage as LobeChatMessage } from '@lobehub/ui/chat';
-import { Check, PencilLine, X } from 'lucide-react';
+import { Activity, Check, PencilLine, X } from 'lucide-react';
 import { SonaChatAnswer } from '@/features/workspace/SonaChatAnswer';
 import { SONA_ASSISTANT_TITLE } from '@/features/workspace/chatMessageUi';
 import type { AgentApprovalAction } from '@/types/sona';
@@ -41,6 +41,34 @@ function AgentStepsPanel({ steps }: { steps: AgentStep[] }) {
         ))}
       </ol>
     </details>
+  );
+}
+
+function ResearchProgressPanel({ steps }: { steps: AgentStep[] }) {
+  if (!steps.length) return null;
+  const ordered = steps.slice(-8);
+  return (
+    <section className="sonaResearchPanel">
+      <div className="sonaResearchHeader">
+        <Activity size={15} />
+        <strong>深度研究进度</strong>
+        <span>{ordered.filter((step) => step.status === 'completed').length}/{ordered.length}</span>
+      </div>
+      <ol className="sonaResearchList">
+        {ordered.map((step) => (
+          <li key={step.id} className={`sonaResearchItem sonaResearchItem--${step.status || 'running'}`}>
+            <span className="sonaResearchDot" />
+            <div>
+              <div className="sonaResearchTitle">
+                <strong>{step.title}</strong>
+                {step.phase ? <span>{step.phase}</span> : null}
+              </div>
+              {step.content ? <p>{step.content}</p> : null}
+            </div>
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 
@@ -129,10 +157,11 @@ export function SonaChatThread({ turns, currentTaskId, onApproval, onOpenReport 
             if (scoped.turn.kind !== 'assistant') return null;
             return (
               <>
+                <ResearchProgressPanel steps={scoped.turn.steps.filter((step) => step.kind === 'research')} />
                 {scoped.turn.steps.filter((step) => step.kind === 'approval').map((step) => (
                   <ApprovalPanel key={step.id} onApproval={scoped.onApproval} step={step} />
                 ))}
-                <AgentStepsPanel steps={scoped.turn.steps.filter((step) => step.kind !== 'approval')} />
+                <AgentStepsPanel steps={scoped.turn.steps.filter((step) => step.kind !== 'approval' && step.kind !== 'research')} />
               </>
             );
           },

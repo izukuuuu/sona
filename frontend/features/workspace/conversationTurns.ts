@@ -286,6 +286,17 @@ function consolidateRun(blocks: TurnBlock[]): { answer: string; steps: AgentStep
       pushStep({ kind: 'compression', title: '上下文压缩', content: block.summary });
       continue;
     }
+    if (block.type === 'research') {
+      pushStep({
+        kind: 'research',
+        title: block.title,
+        content: block.content,
+        status: block.status,
+        phase: block.phase,
+        payload: block.payload,
+      });
+      continue;
+    }
     if (block.type === 'approval') {
       textParts.push(`**${block.title || '等待确认'}**\n\n${block.prompt}`);
       pushStep({
@@ -555,12 +566,34 @@ export function applyAgentRunEvent(blocks: TurnBlock[], event: AgentRunEvent): T
     : payload;
 
   if (event.event_type === 'agent_message_delta') {
-    const content = String(payload.accumulated || payload.content || event.detail || '');
+    const accumulated = typeof payload.accumulated === 'string' ? payload.accumulated : '';
+    const delta = typeof payload.content === 'string' ? payload.content : '';
     const last = next[next.length - 1];
+    const content = accumulated || (last?.type === 'text' && delta ? `${last.content}${delta}` : String(event.detail || delta || ''));
     if (last?.type === 'text') {
       next[next.length - 1] = { type: 'text', content };
     } else if (content) {
       next.push({ type: 'text', content });
+    }
+    return next;
+  }
+
+  if (event.event_type === 'research_progress') {
+    const step = String(payload.step || nestedPayload.step || event.event_id || '');
+    const nextBlock: TurnBlock = {
+      type: 'research',
+      step,
+      title: event.title || '深度研究进度',
+      content: event.detail || String(payload.detail || nestedPayload.detail || ''),
+      phase: String(payload.phase || nestedPayload.phase || 'research'),
+      status: (event.status === 'completed' || event.status === 'failed' ? event.status : 'running') as 'running' | 'completed' | 'failed',
+      payload: nestedPayload,
+    };
+    const index = next.findIndex((block) => block.type === 'research' && block.step === step);
+    if (index >= 0) {
+      next[index] = nextBlock;
+    } else {
+      next.push(nextBlock);
     }
     return next;
   }
