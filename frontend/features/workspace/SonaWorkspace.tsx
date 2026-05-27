@@ -206,11 +206,11 @@ export function SonaWorkspace() {
     const merged = [activeSession, ...sessions].filter((session): session is NonNullable<typeof session> =>
       Boolean(session?.session_id),
     );
-    const deduped = mergeSessionList(merged);
+    const deduped = mergeSessionList(merged).filter(
+      (session) => session.session_id === activeSession?.session_id || !isLikelyTestSession(session),
+    );
     if (!text) {
-      return deduped
-        .filter((session) => session.session_id === activeSession?.session_id || !isLikelyTestSession(session))
-        .slice(0, SIDEBAR_SESSION_LIMIT);
+      return deduped.slice(0, SIDEBAR_SESSION_LIMIT);
     }
     return deduped.filter((session) => {
       const title = `${sessionTitle(session)} ${session.session_id}`.toLowerCase();
@@ -1065,7 +1065,7 @@ export function SonaWorkspace() {
                 <div className="taskList">
                   {visibleTasks.map((task) => (
                     <button
-                      key={task.session_id || task.task_id}
+                      key={task.task_id || task.session_id}
                       onClick={() =>
                         setActiveReportSessionId(
                           task.status === 'succeeded' && task.artifacts?.report_path ? (task.session_id || task.task_id) : '',

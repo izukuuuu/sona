@@ -147,7 +147,7 @@ def test_report_endpoint_localizes_legacy_sandbox_file_url() -> None:
     assert "legacy demo" in report.text
 
 
-def test_tasks_endpoint_hydrates_session_without_in_memory_task() -> None:
+def test_tasks_endpoint_does_not_hydrate_plain_session_without_registered_run() -> None:
     session_id = get_session_manager().create_session("session backed task")
     ensure_task_dirs(session_id)
     report_dir = get_task_dir(session_id) / "结果文件"
@@ -158,13 +158,32 @@ def test_tasks_endpoint_hydrates_session_without_in_memory_task() -> None:
     get_task_store().delete(session_id)
 
     detail = client.get(f"/v1/tasks/{session_id}")
-    assert detail.status_code == 200
-    body = detail.json()
-    assert body["session_id"] == session_id
-    assert body["artifacts"]["report_path"] == str(report_path)
+    assert detail.status_code == 404
 
     tasks = client.get("/v1/tasks").json()["tasks"]
-    assert any(item["session_id"] == session_id and item["artifacts"]["report_path"] == str(report_path) for item in tasks)
+    assert not any(item["session_id"] == session_id for item in tasks)
+
+    report = client.get(f"/v1/tasks/{session_id}/report")
+    assert report.status_code == 200
+    assert "session backed demo" in report.text
+
+
+def test_deleted_session_stays_out_of_recent_list_after_repository_reload() -> None:
+    session_id = get_session_manager().create_session("delete me")
+    deleted = client.delete(f"/v1/chat/sessions/{session_id}")
+    assert deleted.status_code == 200
+    assert all(item["session_id"] != session_id for item in deleted.json()["sessions"])
+
+    from utils import session_manager as session_manager_module
+    from utils.session_repository import reset_session_repository
+
+    session_manager_module._session_manager = None  # noqa: SLF001
+    reset_session_repository()
+
+    listed = client.get("/v1/chat/sessions?limit=100")
+    assert listed.status_code == 200
+    assert all(item["session_id"] != session_id for item in listed.json()["sessions"])
+    assert client.get(f"/v1/chat/sessions/{session_id}").status_code == 404
 
 
 def test_report_endpoint_localizes_encoded_legacy_sandbox_file_url() -> None:
@@ -282,6 +301,122 @@ def test_session_message_delete_turn_removes_assistant_tool_block() -> None:
     assert [message["role"] for message in messages] == ["user", "user"]
     assert messages[0]["content"] == "use tool"
     assert messages[1]["content"] == "next question"
+
+
+def test_sqlite_session_round_trips_tool_context_after_reload() -> None:
+    session_id = get_session_manager().create_session("tool roundtrip")
+    manager = get_session_manager()
+    manager.add_message(session_id, "user", "use tool")
+    manager.add_message(
+        session_id,
+        "assistant",
+        "",
+        tool_calls=[{"id": "call_roundtrip", "name": "demo_tool", "args": {"q": "x"}}],
+    )
+    manager.add_message(
+        session_id,
+        "tool",
+        "tool output",
+        tool_name="demo_tool",
+        tool_call_id="call_roundtrip",
+    )
+
+    from utils import session_manager as session_manager_module
+    from utils.session_repository import reset_session_repository
+
+    session_manager_module._session_manager = None  # noqa: SLF001
+    reset_session_repository()
+
+    session = get_session_manager().load_session(session_id)
+    assert session is not None
+    restored = messages_from_session_data(session)
+    assert any(isinstance(message, AIMessage) and message.tool_calls for message in restored)
+    assert any(isinstance(message, ToolMessage) and message.tool_call_id == "call_roundtrip" for message in restored)
+
+
+def test_langgraph_sqlite_checkpointer_restores_thread_state_after_reload() -> None:
+    from langgraph.graph import StateGraph
+
+    from utils.session_repository import get_session_repository, reset_session_repository
+
+    session_id = get_session_manager().create_session("langgraph checkpoint")
+    run = get_agent_run_store().create(session_id=session_id, query="persist graph", options={})
+
+    builder = StateGraph(int)
+    builder.add_node("add_one", lambda value: value + 1)
+    builder.set_entry_point("add_one")
+    builder.set_finish_point("add_one")
+
+    repo = get_session_repository()
+    config = {"configurable": {"thread_id": session_id}}
+    with repo.langgraph_checkpointer() as checkpointer:
+        graph = builder.compile(checkpointer=checkpointer)
+        assert graph.invoke(1, config) == 2
+        assert graph.invoke(2, config) == 3
+        state = graph.get_state(config)
+        checkpoint_id = state.config["configurable"]["checkpoint_id"]
+        repo.record_run_checkpoint(
+            run.run_id,
+            checkpoint_id=checkpoint_id,
+            checkpoint_ns=state.config["configurable"].get("checkpoint_ns", ""),
+            configurable=state.config["configurable"],
+        )
+        stored = repo.get_run_checkpoint(run.run_id)
+        assert stored is not None
+        assert stored["checkpoint_id"] == checkpoint_id
+
+    reset_session_repository()
+    reloaded_repo = get_session_repository()
+    with reloaded_repo.langgraph_checkpointer() as checkpointer:
+        graph = builder.compile(checkpointer=checkpointer)
+        state = graph.get_state(config)
+
+    assert state.values == 3
+
+
+def test_langgraph_checkpointer_requires_thread_id() -> None:
+    from langgraph.graph import StateGraph
+
+    from utils.session_repository import get_session_repository
+
+    builder = StateGraph(int)
+    builder.add_node("add_one", lambda value: value + 1)
+    builder.set_entry_point("add_one")
+    builder.set_finish_point("add_one")
+
+    with get_session_repository().langgraph_checkpointer() as checkpointer:
+        graph = builder.compile(checkpointer=checkpointer)
+        try:
+            graph.invoke(1, {})
+        except ValueError as exc:
+            assert "thread_id" in str(exc)
+        else:  # pragma: no cover - regression guard
+            raise AssertionError("LangGraph checkpointer accepted missing thread_id")
+
+
+def test_repository_append_fields_and_memory_store_contract() -> None:
+    from utils.session_repository import get_session_repository
+
+    session_id = get_session_manager().create_session("append fields")
+    repo = get_session_repository()
+    item = repo.append_conversation_item(
+        session_id,
+        {
+            "role": "tool",
+            "content": "tool output",
+            "tool_name": "demo_tool",
+            "tool_call_id": "call_fields",
+            "metadata": {"provider": "test"},
+        },
+        run_id="run-fields",
+        turn_id="turn-fields",
+        source="contract",
+    )
+
+    assert item["tool_call_id"] == "call_fields"
+    repo.put_memory(("users", "contract"), "preference", {"style": "concise"}, metadata={"source": "test"})
+    assert repo.get_memory(("users", "contract"), "preference")["value"] == {"style": "concise"}  # type: ignore[index]
+    assert repo.search_memory(("users", "contract"))[0]["key"] == "preference"
 
 
 def test_chat_stream_sse_contract(monkeypatch: Any) -> None:

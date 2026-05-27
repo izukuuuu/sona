@@ -97,6 +97,10 @@ sanbox/
 # Memory - 会话记忆
 memory/
 
+# Local SQLite app data
+data/*.db
+data/*.db-*
+
 # 热点流程产物（独立流程）
 data_langgraph/
 data_langgraph_hourly/

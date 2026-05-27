@@ -106,12 +106,11 @@ def run_analyze_event(body: AnalyzeEventRequest) -> TaskEnvelope:
 
         session_data = manager.load_session(task_id) or {}
         report_path = extract_report_html_path(session_data)
-        stm_file = manager.stm_dir / f"{task_id}.json"
         artifacts = TaskArtifacts(
             report_path=report_path,
             trace_path=LOG_PATH,
             sandbox_dir=str(get_task_dir(task_id)),
-            session_hint=str(stm_file),
+            session_hint=str(getattr(manager.repository, "db_path", "")),
         )
         return TaskEnvelope(
             task_id=task_id,

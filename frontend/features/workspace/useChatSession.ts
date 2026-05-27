@@ -4,11 +4,9 @@ import { useCallback, useRef } from 'react';
 import { sonaApi } from '@/services/sonaApi';
 import { useAppStore } from '@/stores/appStore';
 import type { SessionEnvelope } from '@/types/sona';
-import { mergeSessionList, sessionSidebarKey } from '@/features/workspace/sessionIdentity';
+import { mergeSessionList } from '@/features/workspace/sessionIdentity';
 
 export const LAST_SESSION_KEY = 'sona:lastSessionId';
-const DELETED_SESSION_KEY = 'sona:deletedSessionIds';
-const DELETED_TOPIC_KEY = 'sona:deletedSessionTopics';
 export const SESSION_LIST_LIMIT = 50;
 
 function persistLastSession(sessionId: string, options?: { requireMessages?: boolean; messageCount?: number }) {
@@ -33,72 +31,14 @@ function readLastSession(): string | undefined {
   }
 }
 
-function readDeletedSessionIds(): Set<string> {
-  try {
-    const raw = localStorage.getItem(DELETED_SESSION_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return new Set(Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string') : []);
-  } catch {
-    return new Set();
-  }
-}
-
-type DeletedTopic = {
-  key: string;
-  deletedAt: string;
-};
-
-function readDeletedTopics(): DeletedTopic[] {
-  try {
-    const raw = localStorage.getItem(DELETED_TOPIC_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item): item is DeletedTopic =>
-      Boolean(item && typeof item.key === 'string' && typeof item.deletedAt === 'string'),
-    );
-  } catch {
-    return [];
-  }
-}
-
 function rememberDeletedSessions(sessions: SessionEnvelope[]) {
   try {
-    const next = readDeletedSessionIds();
-    sessions.forEach(({ session_id: id }) => {
-      if (id) next.add(id);
-    });
-    localStorage.setItem(DELETED_SESSION_KEY, JSON.stringify([...next].slice(-500)));
+    const deleted = new Set(sessions.map((session) => session.session_id).filter(Boolean));
     const last = localStorage.getItem(LAST_SESSION_KEY);
-    if (last && next.has(last)) localStorage.removeItem(LAST_SESSION_KEY);
-
-    const deletedAt = new Date().toISOString();
-    const topics = new Map(readDeletedTopics().map((item) => [item.key, item]));
-    sessions.forEach((session) => {
-      const key = sessionSidebarKey(session);
-      if (key) topics.set(key, { key, deletedAt });
-    });
-    localStorage.setItem(DELETED_TOPIC_KEY, JSON.stringify([...topics.values()].slice(-500)));
+    if (last && deleted.has(last)) localStorage.removeItem(LAST_SESSION_KEY);
   } catch {
     // ignore unavailable storage
   }
-}
-
-function omitDeletedSessions(sessions: SessionEnvelope[]): SessionEnvelope[] {
-  const deleted = readDeletedSessionIds();
-  const deletedTopics = readDeletedTopics();
-  if (!deleted.size && !deletedTopics.length) return sessions;
-  return sessions.filter((session) => {
-    if (deleted.has(session.session_id)) return false;
-    const key = sessionSidebarKey(session);
-    if (!key) return true;
-    const updatedAt = Date.parse(session.updated_at || session.created_at || '');
-    return !deletedTopics.some((topic) => {
-      if (topic.key !== key) return false;
-      const deletedAt = Date.parse(topic.deletedAt);
-      if (!Number.isFinite(updatedAt) || !Number.isFinite(deletedAt)) return true;
-      return updatedAt <= deletedAt;
-    });
-  });
 }
 
 type UseChatSessionOptions = {
@@ -123,7 +63,7 @@ export function useChatSession({ setHomeMode, onError }: UseChatSessionOptions) 
 
   const refreshSessions = useCallback(async () => {
     const result = await sonaApi.listSessions(SESSION_LIST_LIMIT);
-    const listed = mergeSessionList(omitDeletedSessions(result.sessions || []));
+    const listed = mergeSessionList(result.sessions || []);
     setSessions(listed);
     return listed;
   }, [setSessions]);
@@ -268,7 +208,7 @@ export function useChatSession({ setHomeMode, onError }: UseChatSessionOptions) 
 
   const handleDeletedCurrent = useCallback(
     async (remaining: SessionEnvelope[]) => {
-      const next = omitDeletedSessions(remaining)[0];
+      const next = remaining[0];
       if (next?.session_id) {
         await openSession(next.session_id);
         return;

@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from utils.session_contract import SESSION_SCHEMA_VERSION, append_agent_event, normalize_session_data
-from utils.path import ensure_memory_dirs, get_stm_dir
+from utils.path import ensure_memory_dirs
+from utils.session_repository import get_session_repository
 
 
 class SessionManager:
@@ -17,6 +16,10 @@ class SessionManager:
     
     def __init__(self):
         """初始化 Session 管理器。"""
+        self.repository = get_session_repository()
+        # STM JSON is now a legacy migration/archive location. Keep the
+        # attribute for report hints and old scripts, but do not use it as the
+        # production source of truth.
         self.stm_dir = ensure_memory_dirs()
     
     def create_session(self, initial_query: str) -> str:
@@ -72,16 +75,14 @@ class SessionManager:
             session_data: 会话数据
             final_query: 最终查询（用于更新描述）
         """
-        session_data = normalize_session_data(session_data)
+        session_data = normalize_session_data({**session_data, "session_id": task_id, "task_id": task_id})
         session_data["updated_at"] = datetime.now().isoformat()
         
         # 如果提供了最终查询，更新描述
         if final_query:
             session_data["description"] = f"分析{final_query}"
         
-        session_file = self.stm_dir / f"{task_id}.json"
-        with open(session_file, 'w', encoding='utf-8') as f:
-            json.dump(session_data, f, ensure_ascii=False, indent=2)
+        self.repository.save_session(task_id, session_data)
     
     def replace_messages(
         self,
@@ -124,12 +125,7 @@ class SessionManager:
         Returns:
             会话数据，如果不存在则返回 None
         """
-        session_file = self.stm_dir / f"{task_id}.json"
-        if not session_file.exists():
-            return None
-        
-        with open(session_file, 'r', encoding='utf-8') as f:
-            return normalize_session_data(json.load(f))
+        return self.repository.load_session(task_id)
     
     def list_sessions(self, limit: int = 5) -> List[Dict[str, Any]]:
         """
@@ -141,25 +137,7 @@ class SessionManager:
         Returns:
             会话列表，按更新时间倒序排列
         """
-        sessions = []
-        
-        # 遍历所有 session 文件
-        for session_file in self.stm_dir.glob("*.json"):
-            try:
-                with open(session_file, 'r', encoding='utf-8') as f:
-                    session_data = normalize_session_data(json.load(f))
-                    sessions.append(session_data)
-            except Exception:
-                # 跳过损坏的文件
-                continue
-        
-        # 按更新时间排序（最新的在前）
-        sessions.sort(
-            key=lambda x: x.get("updated_at", ""),
-            reverse=True
-        )
-        
-        return sessions[:limit]
+        return self.repository.list_sessions(limit)
 
     def update_session(self, task_id: str, *, description: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """更新会话元数据。"""
@@ -229,11 +207,7 @@ class SessionManager:
 
     def delete_session(self, task_id: str) -> bool:
         """删除会话文件。"""
-        session_file = self.stm_dir / f"{task_id}.json"
-        if not session_file.exists():
-            return False
-        session_file.unlink()
-        return True
+        return self.repository.soft_delete_session(task_id)
     
     def add_message(
         self,
@@ -258,10 +232,7 @@ class SessionManager:
         session_data = self.load_session(task_id)
         if not session_data:
             return
-        
-        if "messages" not in session_data:
-            session_data["messages"] = []
-        
+
         msg_data = {
             "role": role,
             "content": content,
@@ -276,23 +247,29 @@ class SessionManager:
         
         if tool_call_id:
             msg_data["tool_call_id"] = tool_call_id
-        
-        session_data["messages"].append(msg_data)
 
         final_query: Optional[str] = None
         if role == "user":
-            user_count = sum(1 for m in session_data["messages"] if m.get("role") == "user")
+            messages = session_data.get("messages") if isinstance(session_data.get("messages"), list) else []
+            user_count = sum(1 for m in messages if m.get("role") == "user") + 1
             if user_count == 1:
                 final_query = content
 
-        self.save_session(task_id, session_data, final_query=final_query)
+        self.repository.append_conversation_item(task_id, msg_data)
+        if final_query:
+            self.repository.update_session_metadata(
+                task_id,
+                title=f"分析{final_query}",
+                initial_query=final_query,
+            )
 
     def add_agent_event(self, task_id: str, event: Dict[str, Any]) -> None:
         """Append a UI/runtime event outside canonical model messages."""
         session_data = self.load_session(task_id)
         if not session_data:
             return
-        self.save_session(task_id, append_agent_event(session_data, event))
+        normalized = append_agent_event(session_data, event)["agent_events"][-1]
+        self.repository.append_agent_event(task_id, normalized)
     
     def add_token_usage(
         self,

@@ -33,6 +33,12 @@ class AgentRunRecord:
         return self.session_id
 
     def envelope(self) -> AgentRunEnvelope:
+        try:
+            from utils.session_repository import get_session_repository
+
+            get_session_repository().upsert_agent_run(self)
+        except Exception:
+            pass
         return AgentRunEnvelope(
             run_id=self.run_id,
             session_id=self.session_id,
@@ -64,6 +70,14 @@ class AgentRunRecord:
             created_at=datetime.now().isoformat(),
         )
         self.events.append(event)
+        try:
+            from utils.session_repository import get_session_repository
+
+            repository = get_session_repository()
+            repository.upsert_agent_run(self)
+            repository.append_agent_event(self.session_id, event.model_dump())
+        except Exception:
+            pass
         return event
 
 
@@ -76,6 +90,12 @@ class AgentRunStore:
         record = AgentRunRecord(session_id=session_id, query=query, options=options)
         with self._lock:
             self._runs[record.run_id] = record
+        try:
+            from utils.session_repository import get_session_repository
+
+            get_session_repository().upsert_agent_run(record)
+        except Exception:
+            pass
         return record
 
     def get(self, run_id: str) -> Optional[AgentRunRecord]:

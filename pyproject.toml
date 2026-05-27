@@ -17,6 +17,7 @@ dependencies = [
     "langchain-openai>=0.2.0",
     "langchain-google-genai>=2.0.0",
     "langgraph>=0.2.0",
+    "langgraph-checkpoint-sqlite>=3.0.1,<4",
     "dashscope>=1.20.0",
     "langchain-mcp-adapters>=0.1.0",
     "bocha-search-mcp>=0.0.1",

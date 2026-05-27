@@ -1,22 +1,39 @@
-# Session Contract v3
+# Session Contract v4
 
-This project stores local conversations as durable session JSON files in `memory/STM`.
+The web/API runtime stores conversations in a SQLite database file. The default
+path is `data/sona.db`, and `SONA_SESSION_DB_PATH` can override it. The same DB
+file also hosts official LangGraph SQLite checkpoint tables created by
+`langgraph-checkpoint-sqlite`; application code must not reimplement or mutate
+those internal checkpoint tables directly.
+
+Legacy JSON files under `memory/STM` are migration/archive input only. They must
+not drive the frontend recent-topic list or `/v1/tasks` in production.
 
 ## Design Rules
 
 - `messages` is the only source used to rebuild model context.
+- `session_id` is the public API identifier and maps 1:1 to LangGraph `thread_id`.
+- LangGraph checkpoint state is addressed with `thread_id`, `checkpoint_ns`, and
+  `checkpoint_id`; Sona stores those references on `agent_runs`.
 - `agent_events` stores UI/runtime stream events and must never be injected into model context.
 - Tool context must be round-trippable: every `tool` message with `tool_call_id` must have a preceding assistant message with a matching `tool_calls[].id`.
 - Tool messages follow a Lobe-compatible shape: assistant messages carry `tools`; tool result messages link back with `parent_id` and `plugin`.
 - Session files are schema-versioned and normalized on load/save.
-- Legacy files are migrated in place after backup.
+- Legacy STM files are imported with `scripts/migrate_stm_to_sqlite.py`; smoke/test sessions are skipped by default.
+- `agent_events`, `agent_runs`, and `artifacts` are not model context. They are UI/runtime/audit data.
+- Cross-session long-term memory is stored as namespace/key JSON records in
+  `memory_store`, not in `messages` or checkpoint history.
+- SQLite is the portable single-backend deployment target. Multi-backend
+  concurrent writers should move the repository/checkpointer implementation to
+  Postgres without changing the frontend contract.
 
-## Shape
+## Session Shape
 
 ```json
 {
   "schema_version": 3,
   "task_id": "uuid",
+  "thread_id": "uuid",
   "status": "active",
   "created_at": "iso",
   "updated_at": "iso",
@@ -36,6 +53,24 @@ This project stores local conversations as durable session JSON files in `memory
   }
 }
 ```
+
+`schema_version` remains the session envelope version. Application database
+migrations are tracked separately in `schema_migrations`.
+
+SQLite stores that envelope across normalized tables:
+
+- `sessions`: thread metadata, title, timestamps, status, soft delete.
+- `conversation_items`: ordered model-context item stream, append-first with stable item IDs.
+- `agent_runs`: execution lifecycle plus LangGraph checkpoint references.
+- `agent_events`: UI/audit stream, excluded from model context.
+- `artifacts`: reports, traces, sandbox/object paths.
+- `session_prefs`: session-scoped harness memory.
+- `memory_store`: long-term JSON memory organized by namespace and key.
+- `schema_migrations`: application database schema version.
+
+LangGraph owns its official checkpoint tables in the same SQLite file. Current
+known table names include `checkpoints` and `writes`, but application code must
+interact with them through `SqliteSaver`.
 
 ## Message Contract
 
@@ -124,7 +159,8 @@ The frontend can render this the Lobe way by grouping tool messages under `paren
 Run:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\migrate_sessions.py
+.\.venv\Scripts\python.exe scripts\migrate_stm_to_sqlite.py --dry-run
+.\.venv\Scripts\python.exe scripts\migrate_stm_to_sqlite.py --apply
 ```
 
-The script backs up changed files under `cache/session_migration_backup/<timestamp>/`.
+The script leaves STM files untouched. Known smoke/test sessions are skipped unless `--include-test` is provided.

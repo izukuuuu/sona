@@ -131,6 +131,18 @@ def get_memory_dir() -> Path:
     return get_project_root() / "memory"
 
 
+def get_data_dir() -> Path:
+    """Data 目录：项目根/data，用于 SQLite 等轻量生产数据文件。"""
+    return get_project_root() / "data"
+
+
+def ensure_data_dir() -> Path:
+    """确保 data 目录存在并返回路径。"""
+    data_dir = get_data_dir()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir
+
+
 def get_stm_dir() -> Path:
     """STM（短期记忆）目录：项目根/memory/STM，用于存储会话数据。"""
     return get_memory_dir() / "STM"

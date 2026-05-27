@@ -24,6 +24,14 @@ class TaskStore:
     def put(self, envelope: TaskEnvelope) -> None:
         with self._lock:
             self._tasks[envelope.task_id] = envelope
+        try:
+            from utils.session_repository import get_session_repository
+
+            get_session_repository().upsert_task_envelope(envelope)
+        except Exception:
+            # TaskStore remains a compatibility cache; repository persistence
+            # must not break a live workflow response.
+            pass
 
     def _from_session(self, task_id: str, base: Optional[TaskEnvelope] = None) -> Optional[TaskEnvelope]:
         from api.report_utils import build_task_envelope_from_session
@@ -47,34 +55,63 @@ class TaskStore:
     def get(self, task_id: str) -> Optional[TaskEnvelope]:
         with self._lock:
             existing = self._tasks.get(task_id)
-        migrated = self._from_session(task_id, existing)
-        if migrated is not None:
-            with self._lock:
-                self._tasks[task_id] = migrated
-        return migrated
+        if existing is not None:
+            try:
+                from utils.session_manager import get_session_manager
+
+                session_key = existing.session_id or existing.task_id
+                if session_key and not get_session_manager().load_session(session_key):
+                    return None
+            except Exception:
+                pass
+            return existing
+        try:
+            from utils.session_repository import get_session_repository
+
+            for envelope in get_session_repository().list_task_envelopes():
+                if envelope.task_id == task_id:
+                    with self._lock:
+                        self._tasks[task_id] = envelope
+                    return envelope
+        except Exception:
+            pass
+        return None
 
     def delete(self, task_id: str) -> None:
         with self._lock:
             self._tasks.pop(task_id, None)
 
+    def clear(self) -> None:
+        with self._lock:
+            self._tasks.clear()
+
     def list_all(self) -> List[TaskEnvelope]:
-        """Return stored envelopes plus session-derived envelopes."""
-        from utils.session_manager import get_session_manager
+        """Return explicit task/run envelopes, not every chat session."""
 
         with self._lock:
             merged = dict(self._tasks)
 
-        for session in get_session_manager().list_sessions(limit=1000):
-            task_id = str(session.get("task_id") or "").strip()
-            if not task_id:
-                continue
-            migrated = self._from_session(task_id, merged.get(task_id))
-            if migrated is not None:
-                merged[task_id] = migrated
+        try:
+            from utils.session_repository import get_session_repository
+
+            for envelope in get_session_repository().list_task_envelopes():
+                merged.setdefault(envelope.task_id, envelope)
+        except Exception:
+            pass
 
         with self._lock:
             self._tasks.update(merged)
-        return list(merged.values())
+        try:
+            from utils.session_manager import get_session_manager
+
+            manager = get_session_manager()
+            return [
+                envelope
+                for envelope in merged.values()
+                if manager.load_session(envelope.session_id or envelope.task_id)
+            ]
+        except Exception:
+            return list(merged.values())
 
 
 _store = TaskStore()
