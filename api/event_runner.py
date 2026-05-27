@@ -95,6 +95,7 @@ def run_analyze_event(body: AnalyzeEventRequest) -> TaskEnvelope:
             )
             return TaskEnvelope(
                 task_id=task_id,
+                session_id=task_id,
                 status=TaskStatus.FAILED,
                 artifacts=TaskArtifacts(
                     trace_path=LOG_PATH,
@@ -114,6 +115,7 @@ def run_analyze_event(body: AnalyzeEventRequest) -> TaskEnvelope:
         )
         return TaskEnvelope(
             task_id=task_id,
+            session_id=task_id,
             status=TaskStatus.SUCCEEDED,
             artifacts=artifacts,
             error=None,

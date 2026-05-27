@@ -6,11 +6,11 @@ import { normalizeMessageContent } from '@/features/workspace/conversationTurns'
 
 type AppState = {
   activeSession?: SessionEnvelope;
-  currentTaskId?: string;
+  currentSessionId?: string;
   messages: ChatMessage[];
   sessions: SessionEnvelope[];
   tasks: TaskEnvelope[];
-  activeReportTaskId?: string;
+  activeReportSessionId?: string;
   sessionLoading: boolean;
   sessionError?: string;
   streamBlocks: TurnBlock[];
@@ -20,7 +20,7 @@ type AppState = {
   mergeActiveSession: (session: SessionEnvelope) => void;
   clearCurrentSession: () => void;
   setSessions: (sessions: SessionEnvelope[]) => void;
-  removeSessions: (taskIds: string[]) => void;
+  removeSessions: (sessionIds: string[]) => void;
   upsertSession: (session: SessionEnvelope) => void;
   setSessionLoading: (loading: boolean) => void;
   setSessionError: (error?: string) => void;
@@ -28,7 +28,7 @@ type AppState = {
   commitStreamReply: (content: string) => void;
   updateLastAssistant: (content: string) => void;
   setTasks: (tasks: TaskEnvelope[]) => void;
-  setActiveReportTaskId: (taskId?: string) => void;
+  setActiveReportSessionId: (sessionId?: string) => void;
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -42,14 +42,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   setActiveSession: (session) =>
     set({
       activeSession: session,
-      currentTaskId: session?.task_id,
+      currentSessionId: session?.session_id,
       messages: session?.messages || [],
       sessionError: undefined,
       streamBlocks: [],
     }),
   mergeActiveSession: (session) =>
     set((state) => {
-      if (state.currentTaskId !== session.task_id) {
+      if (state.currentSessionId !== session.session_id) {
         return { activeSession: session };
       }
       const merged = mergeSessionMessages(state.messages, session.messages || []);
@@ -62,26 +62,26 @@ export const useAppStore = create<AppState>((set, get) => ({
   clearCurrentSession: () =>
     set({
       activeSession: undefined,
-      currentTaskId: undefined,
+      currentSessionId: undefined,
       messages: [],
       streamBlocks: [],
     }),
   setSessions: (sessions) => set({ sessions }),
-  removeSessions: (taskIds) =>
+  removeSessions: (sessionIds) =>
     set((state) => {
-      const deleted = new Set(taskIds);
-      const activeDeleted = state.currentTaskId ? deleted.has(state.currentTaskId) : false;
+      const deleted = new Set(sessionIds);
+      const activeDeleted = state.currentSessionId ? deleted.has(state.currentSessionId) : false;
       return {
         activeSession: activeDeleted ? undefined : state.activeSession,
-        currentTaskId: activeDeleted ? undefined : state.currentTaskId,
+        currentSessionId: activeDeleted ? undefined : state.currentSessionId,
         messages: activeDeleted ? [] : state.messages,
-        sessions: state.sessions.filter((item) => !deleted.has(item.task_id)),
+        sessions: state.sessions.filter((item) => !deleted.has(item.session_id)),
         streamBlocks: activeDeleted ? [] : state.streamBlocks,
       };
     }),
   upsertSession: (session) =>
     set((state) => ({
-      sessions: [session, ...state.sessions.filter((item) => item.task_id !== session.task_id)],
+      sessions: [session, ...state.sessions.filter((item) => item.session_id !== session.session_id)],
     })),
   setSessionLoading: (sessionLoading) => set({ sessionLoading }),
   setSessionError: (sessionError) => set({ sessionError }),
@@ -116,5 +116,5 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { messages };
     }),
   setTasks: (tasks) => set({ tasks }),
-  setActiveReportTaskId: (taskId) => set({ activeReportTaskId: taskId }),
+  setActiveReportSessionId: (sessionId) => set({ activeReportSessionId: sessionId }),
 }));

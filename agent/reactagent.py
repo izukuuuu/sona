@@ -257,6 +257,7 @@ def _stream_mode_flow(
                     force_fresh_start=force_fresh_start,
                     report_length=report_length,
                     progress_callback=on_workflow_progress,
+                    skip_session_user_message=bool(opts.get("_skip_session_user_message")),
                 )
             except Exception as exc:  # noqa: BLE001
                 result_holder["error"] = exc
@@ -286,13 +287,46 @@ def _stream_mode_flow(
         if result_holder["error"] is not None:
             raise result_holder["error"]
         file_url_or_path = result_holder["value"]
+        final_text = f"已完成舆情事件分析工作流。报告：{file_url_or_path or ''}"
         yield {
             "type": "tool_result",
             "tool_name": "full_report_mode_node",
             "result": str(file_url_or_path or ""),
             "run_id": f"mode_full_{task_id or 'na'}",
         }
+        yield {
+            "type": "message",
+            "message": AIMessage(content=final_text),
+            "message_id": f"mode_full_msg_{task_id or 'na'}",
+            "persist": False,
+        }
         return
+
+
+def _extract_reasoning_content(chunk: Any) -> str:
+    """Best-effort extraction for OpenAI-compatible reasoning/thinking chunks."""
+    candidates = []
+    for attr in ("additional_kwargs", "response_metadata"):
+        value = getattr(chunk, attr, None)
+        if isinstance(value, dict):
+            candidates.append(value)
+    if isinstance(chunk, dict):
+        candidates.append(chunk)
+
+    keys = ("reasoning_content", "reasoning", "thinking_content", "thinking")
+    for data in candidates:
+        for key in keys:
+            value = data.get(key)
+            if isinstance(value, str) and value:
+                return value
+        delta = data.get("delta")
+        if isinstance(delta, dict):
+            for key in keys:
+                value = delta.get(key)
+                if isinstance(value, str) and value:
+                    return value
+    return ""
+
 
 # 创建带消息历史的 Agent
 # 注意：此函数目前未使用，保留作为预留功能，用于未来可能需要直接使用带历史管理的 Agent 的场景
@@ -468,6 +502,7 @@ def stream(
                 
                 current_message_id = None
                 current_content = ""
+                current_reasoning = ""
                 # 追踪当前正在执行的工具 run_id，用于过滤工具内部 LLM 的流式输出
                 active_tool_run_ids: set[str] = set()
                 
@@ -492,6 +527,16 @@ def stream(
                         if active_tool_run_ids:
                             continue
                         chunk = data.get("chunk")
+                        if chunk:
+                            reasoning_delta = _extract_reasoning_content(chunk)
+                            if reasoning_delta:
+                                current_reasoning += reasoning_delta
+                                result_queue.put({
+                                    "type": "thinking",
+                                    "content": reasoning_delta,
+                                    "message_id": event.get("run_id", ""),
+                                    "accumulated": current_reasoning
+                                })
                         if chunk and hasattr(chunk, "content") and chunk.content:
                             if current_message_id is None:
                                 current_message_id = event.get("run_id", "")
@@ -518,6 +563,7 @@ def stream(
                             })
                             current_message_id = None
                             current_content = ""
+                            current_reasoning = ""
                     
                     # 工具调用
                     elif event_type == "on_tool_start":

@@ -6,7 +6,7 @@ import {
   buildConversationTurns,
   isStubText,
 } from '@/features/workspace/conversationTurns';
-import type { ChatMessage } from '@/types/sona';
+import type { AgentRunEvent, ChatMessage } from '@/types/sona';
 
 describe('mergeSessionMessages', () => {
   it('keeps local tail when server is behind', () => {
@@ -49,6 +49,13 @@ describe('applyStreamEvent message', () => {
   it('shows token events as the live answer draft', () => {
     const blocks = applyStreamEvent([], { event: 'token', data: { accumulated: '正在生成回答' } });
     expect(blocksFromStream(blocks).answer).toBe('正在生成回答');
+  });
+
+  it('shows thinking events as process steps', () => {
+    const blocks = applyStreamEvent([], { event: 'thinking', data: { accumulated: '先分析意图' } });
+    const live = blocksFromStream(blocks);
+    expect(live.answer).toBe('');
+    expect(live.steps.some((step) => step.kind === 'thinking' && step.content === '先分析意图')).toBe(true);
   });
 
   it('records workflow_step events', () => {
@@ -132,6 +139,50 @@ describe('buildConversationTurns', () => {
     expect(assistants).toHaveLength(1);
     expect(assistants[0].answer).toBe('更长的助手回复内容');
   });
+
+  it('restores separate agent_events as assistant process steps', () => {
+    const messages: ChatMessage[] = [
+      { role: 'user', content: '舆情分析方法', timestamp: '2026-05-27T20:13:58.000Z' },
+      {
+        role: 'assistant',
+        content: '',
+        timestamp: '2026-05-27T20:14:06.000Z',
+        tool_calls: [{ id: 'mode_full_task', name: 'full_report_mode_node', args: { query: '舆情分析方法' } }],
+      },
+      { role: 'user', content: '舆情分析方法', timestamp: '2026-05-27T20:14:06.000Z' },
+    ];
+    const events: AgentRunEvent[] = [
+      {
+        event_id: 'event-1',
+        run_id: 'run-1',
+        session_id: 'task',
+        turn_id: 'turn',
+        event_type: 'agent_step_started',
+        title: '路由与执行计划',
+        detail: '正在判断任务类型并准备执行。',
+        payload: {},
+        created_at: '2026-05-27T20:14:05.000Z',
+      },
+      {
+        event_id: 'event-2',
+        run_id: 'run-1',
+        session_id: 'task',
+        turn_id: 'turn',
+        event_type: 'run_failed',
+        title: '工作流失败',
+        detail: 'Expecting value',
+        payload: {},
+        created_at: '2026-05-27T20:14:06.500Z',
+      },
+    ];
+
+    const turns = buildConversationTurns(messages, events);
+    expect(turns.filter((turn) => turn.kind === 'user')).toHaveLength(1);
+    const assistant = turns.find((turn) => turn.kind === 'assistant');
+    expect(assistant?.answer).not.toContain('"query"');
+    expect(assistant?.steps.some((step) => step.title === '路由与执行计划')).toBe(true);
+    expect(assistant?.steps.some((step) => step.title === '系统' && step.content === 'Expecting value')).toBe(true);
+  });
 });
 
 describe('dedupeMessages', () => {
@@ -143,3 +194,4 @@ describe('dedupeMessages', () => {
     expect(out).toHaveLength(1);
   });
 });
+

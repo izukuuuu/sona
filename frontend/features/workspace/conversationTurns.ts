@@ -228,6 +228,45 @@ function rawBlocksFromMessages(messages: ChatMessage[], start: number, end: numb
   return blocks;
 }
 
+function blocksFromAgentEvents(events: AgentRunEvent[]): TurnBlock[] {
+  return events
+    .slice()
+    .sort((a, b) => Date.parse(a.created_at || '') - Date.parse(b.created_at || ''))
+    .reduce<TurnBlock[]>((blocks, event) => applyAgentRunEvent(blocks, event), []);
+}
+
+function eventBlocksByUserIndex(messages: ChatMessage[], agentEvents: AgentRunEvent[]): Map<number, TurnBlock[]> {
+  const out = new Map<number, TurnBlock[]>();
+  if (!agentEvents.length) return out;
+
+  const groups = new Map<string, AgentRunEvent[]>();
+  for (const event of agentEvents) {
+    const key = event.run_id || event.turn_id || event.event_id;
+    groups.set(key, [...(groups.get(key) || []), event]);
+  }
+
+  const userIndexes = messages
+    .map((message, index) => ({ message, index, time: Date.parse(message.timestamp || '') }))
+    .filter((item) => item.message.role === 'user');
+
+  for (const events of groups.values()) {
+    const sorted = events
+      .slice()
+      .sort((a, b) => Date.parse(a.created_at || '') - Date.parse(b.created_at || ''));
+    const firstTime = Date.parse(sorted[0]?.created_at || '');
+    let target = userIndexes[0]?.index ?? 0;
+    if (Number.isFinite(firstTime)) {
+      for (const item of userIndexes) {
+        if (!Number.isFinite(item.time)) continue;
+        if (item.time <= firstTime) target = item.index;
+      }
+    }
+    out.set(target, [...(out.get(target) || []), ...blocksFromAgentEvents(sorted)]);
+  }
+
+  return out;
+}
+
 function consolidateRun(blocks: TurnBlock[]): { answer: string; steps: AgentStep[] } {
   const steps: AgentStep[] = [];
   const textParts: string[] = [];
@@ -332,11 +371,8 @@ function consolidateRun(blocks: TurnBlock[]): { answer: string; steps: AgentStep
     }
   } else if (steps.length) {
     const lastWorkflow = [...steps].reverse().find((s) => s.kind === 'workflow');
-    const lastTool = [...steps].reverse().find((s) => s.kind === 'tool');
     if (lastWorkflow?.content) {
       answer = lastWorkflow.content.slice(0, 800);
-    } else if (lastTool) {
-      answer = lastTool.content.slice(0, 500);
     }
   }
 
@@ -369,14 +405,29 @@ function mergeAssistantTurns(turns: ConversationTurn[]): ConversationTurn[] {
   return merged;
 }
 
-export function buildConversationTurns(messages: ChatMessage[]): ConversationTurn[] {
+function removeOrphanDuplicateUsers(turns: ConversationTurn[]): ConversationTurn[] {
+  return turns.filter((turn, index) => {
+    if (turn.kind !== 'user') return true;
+    if (turns[index + 1]?.kind === 'assistant') return true;
+    const previousUser = turns
+      .slice(0, index)
+      .reverse()
+      .find((item) => item.kind === 'user');
+    if (!previousUser || previousUser.kind !== 'user') return true;
+    return turn.content !== previousUser.content || Math.abs(turn.timestamp - previousUser.timestamp) > 15_000;
+  });
+}
+
+export function buildConversationTurns(messages: ChatMessage[], agentEvents: AgentRunEvent[] = []): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
+  const eventBlocksByUser = eventBlocksByUserIndex(messages, agentEvents);
   let index = 0;
 
   while (index < messages.length) {
     const message = messages[index];
 
     if (message.role === 'user') {
+      const currentUserIndex = index;
       const content = normalizeMessageContent(message.content);
       const userTimestamp = parseTimestamp(message, index);
       if (content) {
@@ -399,12 +450,13 @@ export function buildConversationTurns(messages: ChatMessage[]): ConversationTur
         index += 1;
       }
 
-      if (runStart === index) {
+      const eventBlocks = eventBlocksByUser.get(currentUserIndex) || [];
+      if (runStart === index && !eventBlocks.length) {
         continue;
       } else {
-        const blocks = rawBlocksFromMessages(messages, runStart, index);
+        const blocks = [...rawBlocksFromMessages(messages, runStart, index), ...eventBlocks];
         const { answer, steps } = consolidateRun(blocks);
-        const first = messages[runStart];
+        const first = messages[runStart] || message;
         if (!answer && steps.length === 0) {
           continue;
         } else {
@@ -443,7 +495,7 @@ export function buildConversationTurns(messages: ChatMessage[]): ConversationTur
     });
   }
 
-  return mergeAssistantTurns(turns);
+  return removeOrphanDuplicateUsers(mergeAssistantTurns(turns));
 }
 
 export function blocksFromStream(blocks: TurnBlock[]): { answer: string; steps: AgentStep[] } {
@@ -470,6 +522,17 @@ export function applyStreamEvent(blocks: TurnBlock[], event: StreamEvent): TurnB
       next[next.length - 1] = { type: 'text', content };
     } else {
       next.push({ type: 'text', content });
+    }
+    return next;
+  }
+
+  if (event.event === 'thinking') {
+    const content = String(data.accumulated || data.content || '');
+    const last = next[next.length - 1];
+    if (last?.type === 'thinking') {
+      next[next.length - 1] = { type: 'thinking', content };
+    } else if (content) {
+      next.push({ type: 'thinking', content });
     }
     return next;
   }
@@ -580,6 +643,17 @@ export function applyAgentRunEvent(blocks: TurnBlock[], event: AgentRunEvent): T
       next[next.length - 1] = { type: 'text', content };
     } else if (content) {
       next.push({ type: 'text', content });
+    }
+    return next;
+  }
+
+  if (event.event_type === 'agent_thinking_delta') {
+    const content = String(payload.accumulated || event.detail || payload.content || '');
+    const last = next[next.length - 1];
+    if (last?.type === 'thinking') {
+      next[next.length - 1] = { type: 'thinking', content };
+    } else if (content) {
+      next.push({ type: 'thinking', content });
     }
     return next;
   }

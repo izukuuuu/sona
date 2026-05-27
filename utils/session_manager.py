@@ -29,10 +29,10 @@ class SessionManager:
         Returns:
             任务 ID（session ID）
         """
-        task_id = str(uuid.uuid4())
+        session_id = str(uuid.uuid4())
         session_data = {
             "schema_version": SESSION_SCHEMA_VERSION,
-            "task_id": task_id,
+            "session_id": session_id,
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
             "status": "active",
@@ -55,8 +55,8 @@ class SessionManager:
             }
         }
         
-        self.save_session(task_id, session_data)
-        return task_id
+        self.save_session(session_id, session_data)
+        return session_id
     
     def save_session(
         self,

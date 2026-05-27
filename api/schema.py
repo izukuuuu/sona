@@ -75,6 +75,7 @@ class TaskEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     task_id: str = Field(..., description="Task or session identifier (UUID or app-defined).")
+    session_id: str = Field(default="", description="Canonical session identifier.")
     status: TaskStatus
     artifacts: TaskArtifacts = Field(default_factory=TaskArtifacts)
     error: Optional[ApiError] = Field(default=None, description="Set when status is failed or partial error info is exposed.")
@@ -112,7 +113,7 @@ class SessionEnvelope(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     schema_version: int = Field(default=3)
-    task_id: str
+    session_id: str
     created_at: str = ""
     updated_at: str = ""
     status: str = "active"
@@ -159,6 +160,8 @@ class AgentRunCreateRequest(BaseModel):
     query: str = Field(..., min_length=1)
     auto_route: bool = Field(default=True)
     prefer_existing_data: bool = Field(default=True)
+    mode: str = Field(default="")
+    command: str = Field(default="")
     workflow_options: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -169,7 +172,7 @@ class AgentRunEvent(BaseModel):
 
     event_id: str
     run_id: str
-    task_id: str
+    session_id: str
     turn_id: str
     event_type: AgentEventType | str
     status: str = ""
@@ -185,7 +188,7 @@ class AgentRunEnvelope(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     run_id: str
-    task_id: str
+    session_id: str
     turn_id: str
     status: AgentRunStatus | str
     query: str = ""
@@ -207,7 +210,8 @@ class WikiQueryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     query: str = Field(..., min_length=1)
-    task_id: Optional[str] = Field(default=None, description="Optional chat session id for persistence.")
+    session_id: Optional[str] = Field(default=None, description="Optional chat session id for persistence.")
+    task_id: Optional[str] = Field(default=None, description="Legacy alias for session_id.")
     topk: int = Field(default=6, ge=1, le=12)
     style: str = Field(default="teach")
     weibo_aux: bool = True
@@ -227,7 +231,8 @@ class CaseSearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     query: str = Field(..., min_length=1)
-    task_id: Optional[str] = Field(default=None, description="Optional chat session id for persistence.")
+    session_id: Optional[str] = Field(default=None, description="Optional chat session id for persistence.")
+    task_id: Optional[str] = Field(default=None, description="Legacy alias for session_id.")
 
 
 class HotRunRequest(BaseModel):
@@ -321,6 +326,7 @@ class MemorySettingsUpdateRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    session_id: Optional[str] = None
     task_id: Optional[str] = None
     enable_memory: Optional[bool] = None
     wiki_style: Optional[str] = Field(default=None, pattern="^(teach|concise)$")

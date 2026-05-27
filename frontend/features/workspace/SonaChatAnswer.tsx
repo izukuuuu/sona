@@ -6,14 +6,14 @@ import { SonaReportFileCard } from '@/features/workspace/SonaReportFileCard';
 
 type SonaChatAnswerProps = {
   answer: string;
-  currentTaskId?: string;
-  onOpenReport?: (taskId: string) => void;
+  currentSessionId?: string;
+  onOpenReport?: (sessionId: string) => void;
   streaming?: boolean;
 };
 
 export function SonaChatAnswer({
   answer,
-  currentTaskId,
+  currentSessionId,
   onOpenReport,
   streaming,
 }: SonaChatAnswerProps) {
@@ -21,7 +21,7 @@ export function SonaChatAnswer({
     return <SonaMarkdown content={answer} streaming={streaming} />;
   }
 
-  const segments = parseAnswerSegments(answer, currentTaskId);
+  const segments = parseAnswerSegments(answer, currentSessionId);
 
   return (
     <div className="sonaChatAnswerBody">
@@ -46,3 +46,4 @@ export function SonaChatAnswer({
     </div>
   );
 }
+

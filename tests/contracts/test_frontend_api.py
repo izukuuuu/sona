@@ -35,41 +35,41 @@ def test_health_and_session_endpoints() -> None:
     created = client.post("/v1/chat/sessions", json={"initial_query": "frontend smoke"})
     assert created.status_code == 200
     body = created.json()
-    assert body["task_id"]
+    assert body["session_id"]
     assert body["messages"] == []
 
     listed = client.get("/v1/chat/sessions?limit=3")
     assert listed.status_code == 200
     assert isinstance(listed.json()["sessions"], list)
 
-    fetched = client.get(f"/v1/chat/sessions/{body['task_id']}")
+    fetched = client.get(f"/v1/chat/sessions/{body['session_id']}")
     assert fetched.status_code == 200
-    assert fetched.json()["task_id"] == body["task_id"]
+    assert fetched.json()["session_id"] == body["session_id"]
 
     renamed = client.patch(
-        f"/v1/chat/sessions/{body['task_id']}",
+        f"/v1/chat/sessions/{body['session_id']}",
         json={"description": "renamed frontend smoke"},
     )
     assert renamed.status_code == 200
     assert renamed.json()["description"] == "renamed frontend smoke"
 
-    deleted = client.delete(f"/v1/chat/sessions/{body['task_id']}")
+    deleted = client.delete(f"/v1/chat/sessions/{body['session_id']}")
     assert deleted.status_code == 200
     assert isinstance(deleted.json()["sessions"], list)
 
-    missing = client.get(f"/v1/chat/sessions/{body['task_id']}")
+    missing = client.get(f"/v1/chat/sessions/{body['session_id']}")
     assert missing.status_code == 404
 
 
 def test_chat_stream_syncs_report_to_task_store(monkeypatch: Any) -> None:
     created = client.post("/v1/chat/sessions", json={"initial_query": "report sync"}).json()
-    task_id = created["task_id"]
+    session_id = created["session_id"]
     report_dir = Path(".pytest_cache") / "sona_reports"
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / f"report_{uuid.uuid4().hex}.html"
     report_path.write_text("<html><body>demo</body></html>", encoding="utf-8")
 
-    monkeypatch.setattr("cli.router.route_query", lambda query, task_id: ("reactagent", {}))
+    monkeypatch.setattr("cli.router.route_query", lambda query, session_id: ("reactagent", {}))
 
     def fake_agent_stream(*args: Any, **kwargs: Any):
         yield {
@@ -83,20 +83,20 @@ def test_chat_stream_syncs_report_to_task_store(monkeypatch: Any) -> None:
     monkeypatch.setattr("agent.reactagent.stream", fake_agent_stream)
 
     response = client.post(
-        f"/v1/chat/sessions/{task_id}/messages:stream",
+        f"/v1/chat/sessions/{session_id}/messages:stream",
         json={"query": "分析事件"},
     )
     assert response.status_code == 200
 
-    env = get_task_store().get(task_id)
+    env = get_task_store().get(session_id)
     assert env is not None
     assert env.status == TaskStatus.SUCCEEDED
     assert env.artifacts.report_path == str(report_path)
 
     tasks = client.get("/v1/tasks").json()["tasks"]
-    assert any(item["task_id"] == task_id for item in tasks)
+    assert any(item["session_id"] == session_id for item in tasks)
 
-    report = client.get(f"/v1/tasks/{task_id}/report")
+    report = client.get(f"/v1/tasks/{session_id}/report")
     assert report.status_code == 200
     assert "demo" in report.text
 
@@ -131,37 +131,57 @@ def test_report_path_extraction_falls_back_to_assistant_message() -> None:
 
 
 def test_report_endpoint_localizes_legacy_sandbox_file_url() -> None:
-    task_id = get_session_manager().create_session("legacy report path")
-    ensure_task_dirs(task_id)
-    report_dir = get_task_dir(task_id) / "结果文件"
+    session_id = get_session_manager().create_session("legacy report path")
+    ensure_task_dirs(session_id)
+    report_dir = get_task_dir(session_id) / "结果文件"
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / "report_legacy.html"
     report_path.write_text("<html><body>legacy demo</body></html>", encoding="utf-8")
 
-    legacy_url = f"file:///Users/example/sona-master/sandbox/{task_id}/结果文件/report_legacy.html"
-    get_session_manager().add_message(task_id, "assistant", f"已完成舆情事件分析工作流。报告：{legacy_url}")
+    legacy_url = f"file:///Users/example/sona-master/sandbox/{session_id}/结果文件/report_legacy.html"
+    get_session_manager().add_message(session_id, "assistant", f"已完成舆情事件分析工作流。报告：{legacy_url}")
 
-    report = client.get(f"/v1/tasks/{task_id}/report")
+    report = client.get(f"/v1/tasks/{session_id}/report")
 
     assert report.status_code == 200
     assert "legacy demo" in report.text
 
 
+def test_tasks_endpoint_hydrates_session_without_in_memory_task() -> None:
+    session_id = get_session_manager().create_session("session backed task")
+    ensure_task_dirs(session_id)
+    report_dir = get_task_dir(session_id) / "结果文件"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / "report_session_backed.html"
+    report_path.write_text("<html><body>session backed demo</body></html>", encoding="utf-8")
+    get_session_manager().add_message(session_id, "assistant", f"报告：{report_path.as_uri()}")
+    get_task_store().delete(session_id)
+
+    detail = client.get(f"/v1/tasks/{session_id}")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["session_id"] == session_id
+    assert body["artifacts"]["report_path"] == str(report_path)
+
+    tasks = client.get("/v1/tasks").json()["tasks"]
+    assert any(item["session_id"] == session_id and item["artifacts"]["report_path"] == str(report_path) for item in tasks)
+
+
 def test_report_endpoint_localizes_encoded_legacy_sandbox_file_url() -> None:
-    task_id = get_session_manager().create_session("encoded legacy report path")
-    ensure_task_dirs(task_id)
-    report_dir = get_task_dir(task_id) / "结果文件"
+    session_id = get_session_manager().create_session("encoded legacy report path")
+    ensure_task_dirs(session_id)
+    report_dir = get_task_dir(session_id) / "结果文件"
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / "report_20260512_015642.html"
     report_path.write_text("<html><body>encoded legacy demo</body></html>", encoding="utf-8")
 
     legacy_url = (
-        f"file:///Users/example/sona-master/sandbox/{task_id}/"
+        f"file:///Users/example/sona-master/sandbox/{session_id}/"
         "%E7%BB%93%E6%9E%9C%E6%96%87%E4%BB%B6/report_20260512_015642.html"
     )
-    get_session_manager().add_message(task_id, "assistant", f"已完成舆情事件分析工作流。报告：{legacy_url}")
+    get_session_manager().add_message(session_id, "assistant", f"已完成舆情事件分析工作流。报告：{legacy_url}")
 
-    report = client.get(f"/v1/tasks/{task_id}/report")
+    report = client.get(f"/v1/tasks/{session_id}/report")
 
     assert report.status_code == 200
     assert "encoded legacy demo" in report.text
@@ -171,27 +191,27 @@ def test_report_endpoint_localizes_windows_sandbox_file_urls() -> None:
     cases = [
         (
             "windows drive report path",
-            "file:///F:/legacy/sona-master/sandbox/{task_id}/"
+            "file:///F:/legacy/sona-master/sandbox/{session_id}/"
             "%E7%BB%93%E6%9E%9C%E6%96%87%E4%BB%B6/report_win.html",
         ),
         (
             "windows backslash report path",
-            "file:///F:\\legacy\\sona-master\\sandbox\\{task_id}\\"
+            "file:///F:\\legacy\\sona-master\\sandbox\\{session_id}\\"
             "%E7%BB%93%E6%9E%9C%E6%96%87%E4%BB%B6\\report_win.html",
         ),
     ]
     for title, url_template in cases:
-        task_id = get_session_manager().create_session(title)
-        ensure_task_dirs(task_id)
-        report_dir = get_task_dir(task_id) / "结果文件"
+        session_id = get_session_manager().create_session(title)
+        ensure_task_dirs(session_id)
+        report_dir = get_task_dir(session_id) / "结果文件"
         report_dir.mkdir(parents=True, exist_ok=True)
         report_path = report_dir / "report_win.html"
         report_path.write_text(f"<html><body>{title}</body></html>", encoding="utf-8")
 
-        legacy_url = url_template.format(task_id=task_id)
-        get_session_manager().add_message(task_id, "assistant", f"已完成舆情事件分析工作流。报告：{legacy_url}")
+        legacy_url = url_template.format(session_id=session_id)
+        get_session_manager().add_message(session_id, "assistant", f"已完成舆情事件分析工作流。报告：{legacy_url}")
 
-        report = client.get(f"/v1/tasks/{task_id}/report")
+        report = client.get(f"/v1/tasks/{session_id}/report")
 
         assert report.status_code == 200
         assert title in report.text
@@ -200,7 +220,7 @@ def test_report_endpoint_localizes_windows_sandbox_file_urls() -> None:
 def test_chat_stream_persists_accumulated_tokens(monkeypatch: Any) -> None:
   created = client.post("/v1/chat/sessions", json={"initial_query": "persist tokens"}).json()
 
-  monkeypatch.setattr("cli.router.route_query", lambda query, task_id: ("reactagent", {}))
+  monkeypatch.setattr("cli.router.route_query", lambda query, session_id: ("reactagent", {}))
 
   def fake_agent_stream(*args: Any, **kwargs: Any):
     yield {"type": "token", "content": "你", "accumulated": "你好，世界"}
@@ -208,27 +228,27 @@ def test_chat_stream_persists_accumulated_tokens(monkeypatch: Any) -> None:
   monkeypatch.setattr("agent.reactagent.stream", fake_agent_stream)
 
   response = client.post(
-    f"/v1/chat/sessions/{created['task_id']}/messages:stream",
+    f"/v1/chat/sessions/{created['session_id']}/messages:stream",
     json={"query": "你好"},
   )
   assert response.status_code == 200
 
-  session = client.get(f"/v1/chat/sessions/{created['task_id']}").json()
+  session = client.get(f"/v1/chat/sessions/{created['session_id']}").json()
   assert [message["role"] for message in session["messages"]] == ["user", "assistant"]
   assert session["messages"][1]["content"] == "你好，世界"
 
 
 def test_session_message_edit_branch_truncates_following_context() -> None:
     created = client.post("/v1/chat/sessions", json={"initial_query": "edit branch"}).json()
-    task_id = created["task_id"]
+    session_id = created["session_id"]
     manager = get_session_manager()
-    manager.add_message(task_id, "user", "old question")
-    manager.add_message(task_id, "assistant", "old answer")
-    session = client.get(f"/v1/chat/sessions/{task_id}").json()
+    manager.add_message(session_id, "user", "old question")
+    manager.add_message(session_id, "assistant", "old answer")
+    session = client.get(f"/v1/chat/sessions/{session_id}").json()
     user_id = session["messages"][0]["id"]
 
     edited = client.patch(
-        f"/v1/chat/sessions/{task_id}/messages/{user_id}",
+        f"/v1/chat/sessions/{session_id}/messages/{user_id}",
         json={"content": "new question", "mode": "branch"},
     )
 
@@ -240,22 +260,22 @@ def test_session_message_edit_branch_truncates_following_context() -> None:
 
 def test_session_message_delete_turn_removes_assistant_tool_block() -> None:
     created = client.post("/v1/chat/sessions", json={"initial_query": "delete turn"}).json()
-    task_id = created["task_id"]
+    session_id = created["session_id"]
     manager = get_session_manager()
-    manager.add_message(task_id, "user", "use tool")
+    manager.add_message(session_id, "user", "use tool")
     manager.add_message(
-        task_id,
+        session_id,
         "assistant",
         "",
         tool_calls=[{"id": "call_delete_turn", "name": "demo_tool", "args": {}}],
     )
-    manager.add_message(task_id, "tool", "tool output", tool_name="demo_tool", tool_call_id="call_delete_turn")
-    manager.add_message(task_id, "assistant", "final answer")
-    manager.add_message(task_id, "user", "next question")
-    session = client.get(f"/v1/chat/sessions/{task_id}").json()
+    manager.add_message(session_id, "tool", "tool output", tool_name="demo_tool", tool_call_id="call_delete_turn")
+    manager.add_message(session_id, "assistant", "final answer")
+    manager.add_message(session_id, "user", "next question")
+    session = client.get(f"/v1/chat/sessions/{session_id}").json()
     assistant_id = session["messages"][1]["id"]
 
-    deleted = client.delete(f"/v1/chat/sessions/{task_id}/messages/{assistant_id}?mode=turn")
+    deleted = client.delete(f"/v1/chat/sessions/{session_id}/messages/{assistant_id}?mode=turn")
 
     assert deleted.status_code == 200
     messages = deleted.json()["messages"]
@@ -271,11 +291,11 @@ def test_chat_stream_sse_contract(monkeypatch: Any) -> None:
         yield server._sse("route", {"route": "reactagent", "task_mode": "qa"})
         yield server._sse("token", {"content": "你", "accumulated": "你"})
         yield server._sse("message", {"content": "你好", "message_id": "m1"})
-        yield server._sse("done", {"task_id": task_id})
+        yield server._sse("done", {"session_id": task_id})
 
     monkeypatch.setattr(server, "_chat_stream", fake_stream)
     response = client.post(
-        f"/v1/chat/sessions/{created['task_id']}/messages:stream",
+        f"/v1/chat/sessions/{created['session_id']}/messages:stream",
         json={"query": "你好"},
     )
     assert response.status_code == 200
@@ -287,11 +307,12 @@ def test_chat_stream_sse_contract(monkeypatch: Any) -> None:
 
 def test_agent_run_sse_contract(monkeypatch: Any) -> None:
     created = client.post("/v1/chat/sessions", json={"initial_query": "agent run smoke"}).json()
-    task_id = created["task_id"]
+    session_id = created["session_id"]
 
-    monkeypatch.setattr("cli.router.route_query", lambda query, task_id: ("reactagent", {}))
+    monkeypatch.setattr("cli.router.route_query", lambda query, session_id: ("reactagent", {}))
 
     def fake_agent_stream(*args: Any, **kwargs: Any):
+        yield {"type": "thinking", "content": "先分析", "accumulated": "先分析"}
         yield {
             "type": "workflow_step",
             "step": "collect_terms",
@@ -316,22 +337,23 @@ def test_agent_run_sse_contract(monkeypatch: Any) -> None:
     monkeypatch.setattr("agent.reactagent.stream", fake_agent_stream)
 
     created_run = client.post(
-        f"/v1/chat/sessions/{task_id}/runs",
+        f"/v1/chat/sessions/{session_id}/runs",
         json={"query": "近期大熊猫相关舆情事件分析"},
     )
     assert created_run.status_code == 200
     run_id = created_run.json()["run_id"]
 
-    response = client.get(f"/v1/chat/sessions/{task_id}/runs/{run_id}/events")
+    response = client.get(f"/v1/chat/sessions/{session_id}/runs/{run_id}/events")
     assert response.status_code == 200
     text = response.text
     assert "event: agent_step_started" in text
+    assert "event: agent_thinking_delta" in text
     assert "event: research_progress" in text
     assert "event: tool_call_started" in text
     assert "event: agent_message_delta" in text
     assert "event: run_completed" in text
 
-    envelope = client.get(f"/v1/chat/sessions/{task_id}/runs/{run_id}").json()
+    envelope = client.get(f"/v1/chat/sessions/{session_id}/runs/{run_id}").json()
     assert envelope["status"] == "succeeded"
     assert any(
         event["event_type"] == "research_progress"
@@ -340,19 +362,58 @@ def test_agent_run_sse_contract(monkeypatch: Any) -> None:
     )
     assert any(event["event_type"] == "tool_call_completed" for event in envelope["events"])
 
-    session = client.get(f"/v1/chat/sessions/{task_id}").json()
+    session = client.get(f"/v1/chat/sessions/{session_id}").json()
     roles = [message["role"] for message in session["messages"]]
     assert "user" in roles
     assert "assistant" in roles
     assert any(message["role"] == "assistant" and message["content"] == "已完成分析" for message in session["messages"])
 
 
+def test_wiki_agent_run_streams_sources_answer_and_persists(monkeypatch: Any) -> None:
+    import workflow.wiki_cli as wiki_cli
+
+    created = client.post("/v1/chat/sessions", json={"initial_query": "wiki stream"}).json()
+    session_id = created["session_id"]
+
+    monkeypatch.setattr(
+        wiki_cli,
+        "answer_wiki_query",
+        lambda *args, **kwargs: {
+            "answer": "舆情方法论包括议题识别、传播链路分析和风险研判。",
+            "sources": [{"title": "舆情方法论", "path": "concepts/method.md"}],
+        },
+    )
+
+    run = client.post(
+        f"/v1/chat/sessions/{session_id}/runs",
+        json={"query": "舆情方法论", "mode": "wiki", "command": "/wiki"},
+    )
+    assert run.status_code == 200
+    assert run.json()["session_id"] == session_id
+
+    response = client.get(f"/v1/chat/sessions/{session_id}/runs/{run.json()['run_id']}/events")
+    assert response.status_code == 200
+    text = response.text
+    assert "event: agent_step_started" in text
+    assert "wiki_retrieve" in text
+    assert "event: tool_call_started" in text
+    assert "event: tool_call_completed" in text
+    assert "event: agent_message_delta" in text
+    assert "event: run_completed" in text
+
+    session = client.get(f"/v1/chat/sessions/{session_id}").json()
+    assert session["session_id"] == session_id
+    assert [message["role"] for message in session["messages"]] == ["user", "assistant"]
+    assert "舆情方法论" in session["messages"][1]["content"]
+    assert any(event["event_type"] == "tool_call_completed" for event in session["agent_events"])
+
+
 def test_agent_run_archived_session_restores_tool_context(monkeypatch: Any) -> None:
     created = client.post("/v1/chat/sessions", json={"initial_query": "tool context"}).json()
-    task_id = created["task_id"]
+    session_id = created["session_id"]
     captured: dict[str, Any] = {}
 
-    monkeypatch.setattr("cli.router.route_query", lambda query, task_id: ("reactagent", {}))
+    monkeypatch.setattr("cli.router.route_query", lambda query, session_id: ("reactagent", {}))
 
     def fake_agent_stream(*args: Any, **kwargs: Any):
         captured["previous_messages"] = kwargs.get("previous_messages")
@@ -373,24 +434,61 @@ def test_agent_run_archived_session_restores_tool_context(monkeypatch: Any) -> N
     monkeypatch.setattr("agent.reactagent.stream", fake_agent_stream)
 
     run = client.post(
-        f"/v1/chat/sessions/{task_id}/runs",
+        f"/v1/chat/sessions/{session_id}/runs",
         json={"query": "用工具查一下大熊猫"},
     ).json()
-    response = client.get(f"/v1/chat/sessions/{task_id}/runs/{run['run_id']}/events")
+    response = client.get(f"/v1/chat/sessions/{session_id}/runs/{run['run_id']}/events")
     assert response.status_code == 200
 
     assert captured["previous_messages"] == []
 
-    session = client.get(f"/v1/chat/sessions/{task_id}").json()
+    session = client.get(f"/v1/chat/sessions/{session_id}").json()
     restored = messages_from_session_data(session)
     assert any(isinstance(message, AIMessage) and message.tool_calls for message in restored)
     assert any(isinstance(message, ToolMessage) and message.tool_call_id == "tool-1" for message in restored)
 
 
+def test_agent_run_does_not_archive_internal_mode_node(monkeypatch: Any) -> None:
+    created = client.post("/v1/chat/sessions", json={"initial_query": "mode node"}).json()
+    session_id = created["session_id"]
+
+    monkeypatch.setattr("cli.router.route_query", lambda query, session_id: ("reactagent", {}))
+
+    def fake_agent_stream(*args: Any, **kwargs: Any):
+        yield {
+            "type": "tool_call",
+            "tool_name": "full_report_mode_node",
+            "args": {"query": "舆情分析方法"},
+            "run_id": "mode-full",
+        }
+        yield {
+            "type": "tool_result",
+            "tool_name": "full_report_mode_node",
+            "result": "file:///tmp/report.html",
+            "run_id": "mode-full",
+        }
+        yield {"type": "token", "content": "完成", "accumulated": "完成"}
+
+    monkeypatch.setattr("agent.reactagent.stream", fake_agent_stream)
+
+    run = client.post(
+        f"/v1/chat/sessions/{session_id}/runs",
+        json={"query": "舆情分析方法"},
+    ).json()
+    response = client.get(f"/v1/chat/sessions/{session_id}/runs/{run['run_id']}/events")
+    assert response.status_code == 200
+
+    session = client.get(f"/v1/chat/sessions/{session_id}").json()
+    archived = json.dumps(session["messages"], ensure_ascii=False)
+    assert "full_report_mode_node" not in archived
+    assert session["messages"][-1]["role"] == "assistant"
+    assert session["messages"][-1]["content"] == "完成"
+
+
 def test_agent_run_events_reconnect_waits_for_live_events() -> None:
     created = client.post("/v1/chat/sessions", json={"initial_query": "reconnect"}).json()
     run = client.post(
-        f"/v1/chat/sessions/{created['task_id']}/runs",
+        f"/v1/chat/sessions/{created['session_id']}/runs",
         json={"query": "保持连接"},
     ).json()
     record = get_agent_run_store().get(run["run_id"])
@@ -405,7 +503,7 @@ def test_agent_run_events_reconnect_waits_for_live_events() -> None:
 
     thread = threading.Thread(target=finish_run)
     thread.start()
-    response = client.get(f"/v1/chat/sessions/{created['task_id']}/runs/{run['run_id']}/events")
+    response = client.get(f"/v1/chat/sessions/{created['session_id']}/runs/{run['run_id']}/events")
     thread.join(timeout=2)
 
     assert response.status_code == 200
@@ -435,7 +533,7 @@ def test_analyze_event_failure_is_logged(monkeypatch: Any) -> None:
     log_path = log_dir / f"debug_{uuid.uuid4().hex}.log"
 
     monkeypatch.setattr(event_runner, "LOG_PATH", str(log_path))
-    monkeypatch.setattr(event_runner, "route_query", lambda query, task_id: ("event", {}))
+    monkeypatch.setattr(event_runner, "route_query", lambda query, session_id: ("event", {}))
 
     def fail_workflow(*args: Any, **kwargs: Any) -> None:
         raise RuntimeError("data_collect failed: playwright executable missing")
@@ -474,19 +572,19 @@ def test_wiki_and_case_endpoints(monkeypatch: Any) -> None:
 
     wiki = client.post(
         "/v1/wiki/query",
-        json={"query": "什么是舆情反转？", "task_id": created["task_id"]},
+        json={"query": "什么是舆情反转？", "session_id": created["session_id"]},
     )
     assert wiki.status_code == 200
     assert wiki.json()["answer"] == "wiki answer"
 
     case = client.post(
         "/v1/cases/search",
-        json={"query": "高铁服务争议", "task_id": created["task_id"]},
+        json={"query": "高铁服务争议", "session_id": created["session_id"]},
     )
     assert case.status_code == 200
     assert case.json()["answer"] == "case answer"
 
-    session = client.get(f"/v1/chat/sessions/{created['task_id']}").json()
+    session = client.get(f"/v1/chat/sessions/{created['session_id']}").json()
     assert [message["role"] for message in session["messages"]] == [
         "user",
         "assistant",
@@ -534,3 +632,4 @@ def test_models_tools_and_monitor_contracts(monkeypatch: Any) -> None:
     report = client.post(f"/v1/monitor/topics/{topic_id}/report", json={"period": "daily"})
     assert report.status_code == 200
     assert report.json()["report_path"]
+

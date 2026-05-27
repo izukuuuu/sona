@@ -17,17 +17,9 @@ import type { AgentApprovalAction } from '@/types/sona';
 function formatChatTime(value: number) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
-  const now = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
   const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-  if (
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate()
-  ) {
-    return clock;
-  }
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${clock}`;
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${clock}`;
 }
 
 function AgentStepsPanel({ steps }: { steps: AgentStep[] }) {
@@ -135,17 +127,17 @@ function AssistantInlinePanels({
 
 type SonaChatThreadProps = {
   turns: ConversationTurn[];
-  currentTaskId?: string;
+  currentSessionId?: string;
   onApproval?: (step: AgentStep, action: AgentApprovalAction) => void;
   onMessageAction?: OnActionsClick;
   onMessageChange?: OnMessageChange;
-  onOpenReport?: (taskId: string) => void;
+  onOpenReport?: (sessionId: string) => void;
 };
 
 type LobeExtra = {
-  currentTaskId?: string;
+  currentSessionId?: string;
   onApproval?: (step: AgentStep, action: AgentApprovalAction) => void;
-  onOpenReport?: (taskId: string) => void;
+  onOpenReport?: (sessionId: string) => void;
   turn: ConversationTurn;
 };
 
@@ -169,13 +161,13 @@ function lobeMessagesFromTurns(
 
 export function SonaChatThread({
   turns,
-  currentTaskId,
+  currentSessionId,
   onApproval,
   onMessageAction,
   onMessageChange,
   onOpenReport,
 }: SonaChatThreadProps) {
-  const data = lobeMessagesFromTurns(turns, { currentTaskId, onApproval, onOpenReport });
+  const data = lobeMessagesFromTurns(turns, { currentSessionId, onApproval, onOpenReport });
   return (
     <div className="sonaChatThread" role="log" aria-live="polite">
       <ChatList
@@ -192,7 +184,7 @@ export function SonaChatThread({
                 <AssistantInlinePanels onApproval={scoped.onApproval} turn={scoped.turn} />
                 <SonaChatAnswer
                   answer={content}
-                  currentTaskId={scoped.currentTaskId}
+                  currentSessionId={scoped.currentSessionId}
                   onOpenReport={scoped.onOpenReport}
                   streaming={id === 'live-stream'}
                 />
@@ -217,3 +209,4 @@ export function SonaChatThread({
     </div>
   );
 }
+

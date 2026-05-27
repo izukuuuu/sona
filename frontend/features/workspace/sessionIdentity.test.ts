@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   dedupeSessionsByTopic,
+  isLikelyTestSession,
   mergeSessionList,
   normalizeSessionTopic,
   topicsMatch,
@@ -15,7 +16,7 @@ describe('sessionIdentity', () => {
 
   it('matches query to session topic', () => {
     const session: SessionEnvelope = {
-      task_id: 'a',
+      session_id: 'a',
       description: '分析广州长隆大熊猫健康状况',
       initial_query: '',
       created_at: '',
@@ -27,7 +28,7 @@ describe('sessionIdentity', () => {
 
   it('dedupes sessions with the same topic', () => {
     const older: SessionEnvelope = {
-      task_id: 'old',
+      session_id: 'old',
       description: '分析 OPPO 母亲节广告',
       initial_query: '',
       created_at: '',
@@ -35,21 +36,21 @@ describe('sessionIdentity', () => {
       messages: [{ role: 'user', content: 'hi' }],
     };
     const newer: SessionEnvelope = {
-      task_id: 'new',
+      session_id: 'new',
       description: '分析 OPPO 母亲节广告文案争议舆情',
       initial_query: '',
       created_at: '',
       updated_at: '2026-05-15T00:00:00',
       messages: [{ role: 'user', content: 'hi' }],
     };
-    const keys = dedupeSessionsByTopic([older, newer]).map((s) => s.task_id);
+    const keys = dedupeSessionsByTopic([older, newer]).map((s) => s.session_id);
     expect(keys).toEqual(['new']);
     expect(topicsMatch(older.description || '', newer)).toBe(true);
   });
 
-  it('mergeSessionList dedupes by task_id then topic', () => {
+  it('mergeSessionList dedupes by session_id then topic', () => {
     const session: SessionEnvelope = {
-      task_id: 'same',
+      session_id: 'same',
       description: '分析 OPPO',
       initial_query: '',
       created_at: '',
@@ -58,4 +59,12 @@ describe('sessionIdentity', () => {
     };
     expect(mergeSessionList([session, session])).toHaveLength(1);
   });
+
+  it('identifies obvious smoke and legacy frontend sessions', () => {
+    expect(isLikelyTestSession({ initial_query: 'stream smoke windows backslash report path' })).toBe(true);
+    expect(isLikelyTestSession({ initial_query: 'legacy report path' })).toBe(true);
+    expect(isLikelyTestSession({ initial_query: '测试事件' })).toBe(true);
+    expect(isLikelyTestSession({ initial_query: '什么是舆情反转？' })).toBe(false);
+  });
 });
+

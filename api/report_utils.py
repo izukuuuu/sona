@@ -23,7 +23,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_TRACE_PATH = os.getenv("SONA_DEBUG_LOG_PATH", str(_ROOT / ".cursor" / "debug.log"))
 _FILE_URL_RE = re.compile(r"(file://[^\s)\]]+)", re.IGNORECASE)
 _REPORT_PATH_RE = re.compile(
-    r"([A-Za-z]:[\\/][^\s)\]]+|(?:\.?[\\/]|sandbox[\\/])?[A-Za-z0-9_.\-\u4e00-\u9fff\\/]+\.html?)",
+    r"([A-Za-z]:[\\/][^\s)\]\"'<>},]+|(?:\.?[\\/]|sandbox[\\/])?[A-Za-z0-9_.\-\u4e00-\u9fff\\/]+\.html?)",
     re.IGNORECASE,
 )
 
@@ -129,6 +129,50 @@ def extract_report_html_path(session_data: Dict[str, Any]) -> str:
         html_path = _extract_report_path_from_text(str(msg.get("content", "") or ""))
         if html_path:
             return html_path
+    events = session_data.get("agent_events", [])
+    if isinstance(events, list):
+        for event in reversed(events):
+            if not isinstance(event, dict):
+                continue
+            payload = event.get("payload")
+            payload_dict = payload if isinstance(payload, dict) else {}
+            tool_name = str(payload_dict.get("tool_name") or event.get("title") or "")
+            event_type = str(event.get("event_type") or "")
+            if (
+                tool_name not in ("report_html", "full_report_mode_node")
+                and "report" not in tool_name.lower()
+                and event_type != "artifact_created"
+            ):
+                continue
+            for candidate in (
+                payload_dict.get("result"),
+                payload_dict.get("html_file_path"),
+                payload_dict.get("report_path"),
+                payload_dict.get("file_url"),
+                event.get("detail"),
+            ):
+                if isinstance(candidate, dict):
+                    html_path = _normalize_report_path(
+                        candidate.get("html_file_path")
+                        or candidate.get("report_path")
+                        or candidate.get("file_url")
+                    )
+                else:
+                    raw = str(candidate or "").strip()
+                    try:
+                        parsed = json.loads(raw) if raw else None
+                    except Exception:
+                        parsed = None
+                    if isinstance(parsed, dict):
+                        html_path = _normalize_report_path(
+                            parsed.get("html_file_path")
+                            or parsed.get("report_path")
+                            or parsed.get("file_url")
+                        )
+                    else:
+                        html_path = _extract_report_path_from_text(raw)
+                if html_path:
+                    return html_path
     return ""
 
 
@@ -154,6 +198,7 @@ def build_task_envelope_from_session(
     if failed:
         return TaskEnvelope(
             task_id=task_id,
+            session_id=task_id,
             status=TaskStatus.FAILED,
             artifacts=artifacts,
             error=ApiError(
@@ -163,6 +208,7 @@ def build_task_envelope_from_session(
         )
     return TaskEnvelope(
         task_id=task_id,
+        session_id=task_id,
         status=TaskStatus.SUCCEEDED,
         artifacts=artifacts,
         error=None,

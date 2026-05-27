@@ -2463,6 +2463,7 @@ def run_event_analysis_pipeline(
     force_fresh_start: Optional[bool] = None,
     report_length: Optional[str] = None,
     progress_callback: Optional[Any] = None,
+    skip_session_user_message: bool = False,
 ) -> str:
     """
     在 CLI 中运行"4.1 舆情事件分析工作流"。
@@ -2600,7 +2601,8 @@ def run_event_analysis_pipeline(
             if detail:
                 console.print(f"[dim]{detail[:4000]}[/dim]")
 
-    session_manager.add_message(task_id, "user", user_query)
+    if not skip_session_user_message:
+        session_manager.add_message(task_id, "user", user_query)
     _set_session_final_query(session_manager, task_id, user_query)
 
     _append_ndjson_log(

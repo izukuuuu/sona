@@ -1,6 +1,8 @@
 import type { SessionEnvelope } from '@/types/sona';
 
 const GENERIC_LABELS = new Set(['', '新话题', 'sona session', 'frontend session']);
+const TEST_SESSION_EXACT_LABELS = new Set(['hi', 'hello', '你好', '保持连接']);
+const TEST_SESSION_PATTERN = /(?:legacy report path|windows (?:drive|backslash)|stream smoke|smoke|test|测试)/i;
 
 /** Strip display prefixes so "初始对话：foo" and "分析foo" match the same topic. */
 export function normalizeSessionTopic(text: string): string {
@@ -33,6 +35,14 @@ export function sessionSidebarKey(session: {
   return sessionDisplayLabel(session).toLowerCase();
 }
 
+export function isLikelyTestSession(session: {
+  description?: string;
+  initial_query?: string;
+}): boolean {
+  const label = sessionSidebarKey(session);
+  return TEST_SESSION_EXACT_LABELS.has(label) || TEST_SESSION_PATTERN.test(label);
+}
+
 /** Compact fingerprint for clustering near-duplicate topics. */
 export function sessionFingerprint(session: {
   description?: string;
@@ -62,7 +72,7 @@ function isGenericSidebarKey(key: string): boolean {
 }
 
 export function sessionsAreDuplicates(a: SessionEnvelope, b: SessionEnvelope): boolean {
-  if (a.task_id === b.task_id) return true;
+  if (a.session_id === b.session_id) return true;
 
   const labelA = a.description || a.initial_query || '';
   const labelB = b.description || b.initial_query || '';
@@ -89,22 +99,23 @@ export function dedupeSessionsByTopic(sessions: SessionEnvelope[]): SessionEnvel
   );
   const kept: SessionEnvelope[] = [];
   for (const session of sorted) {
-    if (!session.task_id) continue;
+    if (!session.session_id) continue;
     const isDup = kept.some((item) => sessionsAreDuplicates(session, item));
     if (!isDup) kept.push(session);
   }
   return kept;
 }
 
-/** Dedupe by task_id first (active + list merge), then by topic. */
+/** Dedupe by session_id first (active + list merge), then by topic. */
 export function mergeSessionList(sessions: SessionEnvelope[]): SessionEnvelope[] {
   const byId = new Map<string, SessionEnvelope>();
   for (const session of sessions) {
-    if (!session.task_id) continue;
-    const prev = byId.get(session.task_id);
+    if (!session.session_id) continue;
+    const prev = byId.get(session.session_id);
     if (!prev || String(session.updated_at || '') > String(prev.updated_at || '')) {
-      byId.set(session.task_id, session);
+      byId.set(session.session_id, session);
     }
   }
   return dedupeSessionsByTopic([...byId.values()]);
 }
+

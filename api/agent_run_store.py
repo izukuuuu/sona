@@ -13,9 +13,9 @@ from api.schema import AgentEventType, AgentRunEnvelope, AgentRunEvent, AgentRun
 class AgentRunRecord:
     """Mutable server-side state for one Agent run."""
 
-    def __init__(self, *, task_id: str, query: str, options: Dict[str, Any]) -> None:
+    def __init__(self, *, session_id: str, query: str, options: Dict[str, Any]) -> None:
         self.run_id = str(uuid.uuid4())
-        self.task_id = task_id
+        self.session_id = session_id
         self.turn_id = str(uuid.uuid4())
         self.query = query
         self.options = dict(options)
@@ -27,10 +27,15 @@ class AgentRunRecord:
         self.pending_approval_id = ""
         self.approval_decision: Optional[Dict[str, Any]] = None
 
+    @property
+    def task_id(self) -> str:
+        """Legacy alias while route variables migrate to session_id."""
+        return self.session_id
+
     def envelope(self) -> AgentRunEnvelope:
         return AgentRunEnvelope(
             run_id=self.run_id,
-            task_id=self.task_id,
+            session_id=self.session_id,
             turn_id=self.turn_id,
             status=self.status,
             query=self.query,
@@ -49,7 +54,7 @@ class AgentRunRecord:
         event = AgentRunEvent(
             event_id=str(uuid.uuid4()),
             run_id=self.run_id,
-            task_id=self.task_id,
+            session_id=self.session_id,
             turn_id=self.turn_id,
             event_type=str(event_type),
             status=status,
@@ -67,8 +72,8 @@ class AgentRunStore:
         self._lock = threading.Lock()
         self._runs: Dict[str, AgentRunRecord] = {}
 
-    def create(self, *, task_id: str, query: str, options: Dict[str, Any]) -> AgentRunRecord:
-        record = AgentRunRecord(task_id=task_id, query=query, options=options)
+    def create(self, *, session_id: str, query: str, options: Dict[str, Any]) -> AgentRunRecord:
+        record = AgentRunRecord(session_id=session_id, query=query, options=options)
         with self._lock:
             self._runs[record.run_id] = record
         return record

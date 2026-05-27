@@ -1,4 +1,5 @@
-const URL_RE = /(file:\/\/[^\s)\]]+|https?:\/\/[^\s)\]]+)/gi;
+const REPORT_REF_RE =
+  /(file:\/\/[^\s)\]]+|https?:\/\/[^\s)\]]+|[A-Za-z]:[\\/][^\s)\]]+\.(?:html?|md|pdf|docx?)|(?:\.{1,2}[\\/]|[/\\]|sandbox[\\/]|\.pytest_cache[\\/])[^\s)\]]+\.(?:html?|md|pdf|docx?)|\breport_[A-Za-z0-9_.-]+\.(?:html?|md|pdf|docx?))/gi;
 const SANDBOX_TASK_RE = /[/\\]sandbox[/\\]([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
 const REPORT_FILE_RE = /\.(html?|md|pdf|docx?)$/i;
 
@@ -6,7 +7,7 @@ export type ReportRef = {
   url: string;
   fileName: string;
   fileType: string;
-  taskId?: string;
+  sessionId?: string;
 };
 
 export type AnswerSegment =
@@ -17,7 +18,7 @@ export function parseReportFileName(url: string): string {
   try {
     const decoded = decodeURIComponent(url);
     const parts = decoded.split(/[/\\]/);
-    return parts[parts.length - 1] || 'report';
+    return parts[parts.length - 1]?.replace(/^["']|["']$/g, '') || 'report';
   } catch {
     return 'report';
   }
@@ -28,10 +29,10 @@ export function parseReportFileType(fileName: string): string {
   return ext && ext.length <= 5 ? ext : 'html';
 }
 
-export function extractTaskIdFromUrl(url: string, fallbackTaskId?: string): string | undefined {
+export function extractSessionIdFromUrl(url: string, fallbackSessionId?: string): string | undefined {
   const match = url.match(SANDBOX_TASK_RE);
   if (match?.[1]) return match[1];
-  return fallbackTaskId?.trim() || undefined;
+  return fallbackSessionId?.trim() || undefined;
 }
 
 export function isReportUrl(url: string): boolean {
@@ -40,18 +41,18 @@ export function isReportUrl(url: string): boolean {
   return /report/i.test(url);
 }
 
-export function reportApiPath(taskId: string): string {
-  return `/api/sona/v1/tasks/${taskId}/report`;
+export function reportApiPath(sessionId: string): string {
+  return `/api/sona/v1/chat/sessions/${sessionId}/report`;
 }
 
 function cleanLeadText(text: string): string {
   return text.replace(/[：:]\s*$/, '').trimEnd();
 }
 
-export function parseAnswerSegments(answer: string, fallbackTaskId?: string): AnswerSegment[] {
+export function parseAnswerSegments(answer: string, fallbackSessionId?: string): AnswerSegment[] {
   const segments: AnswerSegment[] = [];
   let lastIndex = 0;
-  const re = new RegExp(URL_RE.source, 'gi');
+  const re = new RegExp(REPORT_REF_RE.source, 'gi');
   let match: RegExpExecArray | null;
 
   while ((match = re.exec(answer)) !== null) {
@@ -70,7 +71,7 @@ export function parseAnswerSegments(answer: string, fallbackTaskId?: string): An
         url,
         fileName,
         fileType: parseReportFileType(fileName),
-        taskId: extractTaskIdFromUrl(url, fallbackTaskId),
+        sessionId: extractSessionIdFromUrl(url, fallbackSessionId),
       },
     });
     lastIndex = match.index + url.length;
@@ -87,7 +88,7 @@ export function parseAnswerSegments(answer: string, fallbackTaskId?: string): An
 }
 
 export function hasReportRefs(answer: string): boolean {
-  const re = new RegExp(URL_RE.source, 'gi');
+  const re = new RegExp(REPORT_REF_RE.source, 'gi');
   let match: RegExpExecArray | null;
   while ((match = re.exec(answer)) !== null) {
     if (isReportUrl(match[0])) return true;

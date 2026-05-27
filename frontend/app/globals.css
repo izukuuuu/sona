@@ -7,7 +7,13 @@
   --line: #e6e6e8;
   --hover: #ececee;
   --active: #e9e9eb;
-  --accent: #0b7285;
+  --accent: #3f6872;
+  --accent-dark: #2f535c;
+  --accent-hover: #4d7882;
+  --accent-soft: #e8eef0;
+  --accent-tint: #f3f7f8;
+  --accent-line: #bccbd0;
+  --accent-shadow: rgba(47, 83, 92, 0.13);
   --danger: #e5484d;
   --shadow: 0 14px 38px rgba(20, 20, 20, 0.08);
   --radius: 10px;
@@ -93,6 +99,25 @@ textarea {
 .sonaSideNavSectionLink:hover {
   background: var(--hover);
   color: var(--ink);
+}
+
+#lobe-ui-theme-app .sonaSideNav .ant-menu-item-selected,
+#lobe-ui-theme-app .sonaSideNav .ant-menu-submenu-selected > .ant-menu-submenu-title {
+  background-color: var(--accent-soft) !important;
+  color: var(--accent-dark) !important;
+}
+
+#lobe-ui-theme-app .sonaSideNav .ant-menu-item-selected .ant-menu-title-content,
+#lobe-ui-theme-app .sonaSideNav .ant-menu-item-selected .ant-menu-item-icon,
+#lobe-ui-theme-app .sonaSideNav .ant-menu-submenu-selected .ant-menu-title-content,
+#lobe-ui-theme-app .sonaSideNav .ant-menu-submenu-selected .ant-menu-item-icon {
+  color: var(--accent-dark) !important;
+}
+
+#lobe-ui-theme-app .sonaSideNav .ant-menu-item-active:not(.ant-menu-item-selected),
+#lobe-ui-theme-app .sonaSideNav .ant-menu-submenu-title:hover {
+  background-color: var(--hover) !important;
+  color: var(--ink) !important;
 }
 
 .headerActions button,
@@ -524,8 +549,8 @@ textarea {
 }
 
 .sonaChatRow.isUser .sonaChatBubble {
-  border-color: #c8d6f0;
-  background: #edf4ff;
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
 }
 
 .sonaChatRow.isAssistant .sonaChatBubble {
@@ -578,8 +603,8 @@ textarea {
 }
 
 .sonaReportFileCard:hover {
-  border-color: #8fb9c2;
-  box-shadow: 0 8px 24px rgb(30 64 175 / 10%);
+  border-color: var(--accent-line);
+  box-shadow: 0 8px 24px var(--accent-shadow);
   transform: translateY(-1px);
 }
 
@@ -649,7 +674,7 @@ textarea {
 }
 
 .sonaAgentStep--thinking .sonaAgentStepTitle {
-  color: #7c5cff;
+  color: var(--accent-dark);
 }
 
 .sonaAgentStep--tool .sonaAgentStepTitle {
@@ -705,15 +730,15 @@ textarea {
 }
 
 .sonaAgentStep--workflow .sonaAgentStepTitle {
-  color: #0d9488;
+  color: var(--accent-dark);
 }
 
 .sonaResearchPanel {
   width: 100%;
   padding: 12px;
-  border: 1px solid #d9e2f1;
+  border: 1px solid var(--accent-line);
   border-radius: 8px;
-  background: #f7faff;
+  background: var(--accent-tint);
 }
 
 .sonaResearchHeader {
@@ -721,7 +746,7 @@ textarea {
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
-  color: #22324a;
+  color: var(--accent-dark);
 }
 
 .sonaResearchHeader strong {
@@ -754,7 +779,7 @@ textarea {
   height: 8px;
   margin-top: 6px;
   border-radius: 999px;
-  background: #4f7cff;
+  background: var(--accent);
 }
 
 .sonaResearchItem--completed .sonaResearchDot {
@@ -782,8 +807,8 @@ textarea {
   flex-shrink: 0;
   padding: 1px 7px;
   border-radius: 999px;
-  background: #e9effb;
-  color: #43526a;
+  background: var(--accent-soft);
+  color: var(--accent-dark);
   font-size: 11px;
 }
 
@@ -923,7 +948,7 @@ textarea {
 
 .homeShortcuts button:hover,
 .briefHead button:hover {
-  border-color: #c8d6f0;
+  border-color: var(--accent-line);
   color: var(--accent);
 }
 

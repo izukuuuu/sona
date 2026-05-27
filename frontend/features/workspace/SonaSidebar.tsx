@@ -34,13 +34,13 @@ const SIDEBAR_DEFAULT_WIDTH = 360;
 const SIDEBAR_MIN_WIDTH = 64;
 
 export type SidebarSession = {
-  task_id: string;
+  session_id: string;
   description?: string;
   initial_query?: string;
 };
 
 export type SonaSidebarProps = {
-  activeTaskId?: string;
+  activeSessionId?: string;
   apiError: string;
   expand: boolean;
   health: ApiHealth | null;
@@ -57,8 +57,8 @@ export type SonaSidebarProps = {
   onOpenTasks: () => void;
   onRefresh: () => void;
   onSearchChange: (value: string) => void;
-  onSelectSession: (taskId: string) => void;
-  onSessionAction: (taskId: string, action: string) => void;
+  onSelectSession: (sessionId: string) => void;
+  onSessionAction: (sessionId: string, action: string) => void;
   onToday: () => void;
   searchText: string;
   sessionTitle: (session: SidebarSession) => string;
@@ -120,7 +120,7 @@ function SidebarHeader({
 }
 
 function SidebarBody({
-  activeTaskId,
+  activeSessionId,
   apiError,
   expand,
   homeMode,
@@ -143,9 +143,9 @@ function SidebarBody({
 }) {
   const selectedKeys = useMemo(() => {
     if (homeMode) return ['home'];
-    if (activeTaskId) return [activeTaskId];
+    if (activeSessionId) return [activeSessionId];
     return [];
-  }, [activeTaskId, homeMode]);
+  }, [activeSessionId, homeMode]);
 
   const mainItems: MenuItemType[] = useMemo(
     () => [
@@ -160,7 +160,7 @@ function SidebarBody({
     () =>
       sessions.map((session) => ({
         icon: Hash,
-        key: session.task_id,
+        key: session.session_id,
         label: expand ? (
           <Flexbox
             align="center"
@@ -175,7 +175,7 @@ function SidebarBody({
               menu={{
                 onClick: ({ key, domEvent }) => {
                   domEvent.stopPropagation();
-                  onSessionAction(session.task_id, key);
+                  onSessionAction(session.session_id, key);
                 },
                 items: [
                   { icon: <Pencil size={15} />, key: 'rename', label: '重命名' },
@@ -216,7 +216,7 @@ function SidebarBody({
         {
           children: sessionItems,
           key: 'sessions-group',
-          label: '今天',
+          label: '最近话题',
           type: 'group' as const,
         },
       ];
@@ -388,3 +388,4 @@ export function SonaSidebar(props: SonaSidebarProps) {
     />
   );
 }
+

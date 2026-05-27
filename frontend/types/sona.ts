@@ -30,7 +30,7 @@ export type ChatMessage = {
 
 export type SessionEnvelope = {
   schema_version?: number;
-  task_id: string;
+  session_id: string;
   created_at?: string;
   updated_at?: string;
   status?: string;
@@ -45,6 +45,7 @@ export type SessionMessageEditMode = 'message' | 'turn' | 'branch';
 
 export type TaskEnvelope = {
   task_id: string;
+  session_id?: string;
   status: 'queued' | 'running' | 'succeeded' | 'failed';
   artifacts: {
     report_path?: string;
@@ -111,6 +112,7 @@ export type AgentRunStatus =
 
 export type AgentEventType =
   | 'agent_message_delta'
+  | 'agent_thinking_delta'
   | 'research_progress'
   | 'agent_step_started'
   | 'agent_step_updated'
@@ -127,7 +129,7 @@ export type AgentEventType =
 export type AgentRunEvent = {
   event_id: string;
   run_id: string;
-  task_id: string;
+  session_id: string;
   turn_id: string;
   event_type: AgentEventType | string;
   status?: string;
@@ -139,7 +141,7 @@ export type AgentRunEvent = {
 
 export type AgentRunEnvelope = {
   run_id: string;
-  task_id: string;
+  session_id: string;
   turn_id: string;
   status: AgentRunStatus | string;
   query: string;
@@ -154,6 +156,7 @@ export type AgentRunSseEvent = {
 };
 
 export type StreamEvent =
+  | { event: 'thinking'; data: { content: string; accumulated?: string; message_id?: string } }
   | { event: 'token'; data: { content: string; accumulated?: string; message_id?: string } }
   | { event: 'message'; data: { content: string; message_id?: string } }
   | { event: 'tool_call'; data: { tool_name: string; args?: unknown; run_id?: string } }

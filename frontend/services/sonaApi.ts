@@ -59,50 +59,59 @@ export const sonaApi = {
   health: () => apiGet<ApiHealth>('/health'),
   createSession: (initial_query: string) =>
     apiPost<SessionEnvelope>('/v1/chat/sessions', { initial_query }),
-  updateSession: (taskId: string, description: string) =>
-    fetch(`${API_ROOT}/v1/chat/sessions/${taskId}`, {
+  updateSession: (sessionId: string, description: string) =>
+    fetch(`${API_ROOT}/v1/chat/sessions/${sessionId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ description }),
     }).then((response) => parseJson<SessionEnvelope>(response)),
-  deleteSession: (taskId: string) =>
-    fetch(`${API_ROOT}/v1/chat/sessions/${taskId}`, { method: 'DELETE' })
+  deleteSession: (sessionId: string) =>
+    fetch(`${API_ROOT}/v1/chat/sessions/${sessionId}`, { method: 'DELETE' })
       .then((response) => parseJson<{ sessions: SessionEnvelope[] }>(response)),
-  getSession: (taskId: string) => apiGet<SessionEnvelope>(`/v1/chat/sessions/${taskId}`),
+  getSession: (sessionId: string) => apiGet<SessionEnvelope>(`/v1/chat/sessions/${sessionId}`),
   updateSessionMessage: (
-    taskId: string,
+    sessionId: string,
     messageId: string,
     body: { content: string; mode?: SessionMessageEditMode },
   ) =>
-    fetch(`${API_ROOT}/v1/chat/sessions/${taskId}/messages/${messageId}`, {
+    fetch(`${API_ROOT}/v1/chat/sessions/${sessionId}/messages/${messageId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }).then((response) => parseJson<SessionEnvelope>(response)),
-  deleteSessionMessage: (taskId: string, messageId: string, mode: SessionMessageEditMode = 'turn') =>
+  deleteSessionMessage: (sessionId: string, messageId: string, mode: SessionMessageEditMode = 'turn') =>
     fetch(
-      `${API_ROOT}/v1/chat/sessions/${taskId}/messages/${messageId}?mode=${encodeURIComponent(mode)}`,
+      `${API_ROOT}/v1/chat/sessions/${sessionId}/messages/${messageId}?mode=${encodeURIComponent(mode)}`,
       { method: 'DELETE' },
     ).then((response) => parseJson<SessionEnvelope>(response)),
   createAgentRun: (
-    taskId: string,
-    body: { query: string; auto_route?: boolean; prefer_existing_data?: boolean; workflow_options?: Record<string, unknown> },
+    sessionId: string,
+    body: {
+      query: string;
+      auto_route?: boolean;
+      prefer_existing_data?: boolean;
+      mode?: string;
+      command?: string;
+      workflow_options?: Record<string, unknown>;
+    },
   ) =>
-    apiPost<AgentRunEnvelope>(`/v1/chat/sessions/${taskId}/runs`, {
+    apiPost<AgentRunEnvelope>(`/v1/chat/sessions/${sessionId}/runs`, {
       auto_route: body.auto_route ?? true,
+      command: body.command || '',
+      mode: body.mode || '',
       prefer_existing_data: body.prefer_existing_data ?? true,
       query: body.query,
       workflow_options: body.workflow_options || {},
     }),
-  getAgentRun: (taskId: string, runId: string) =>
-    apiGet<AgentRunEnvelope>(`/v1/chat/sessions/${taskId}/runs/${runId}`),
+  getAgentRun: (sessionId: string, runId: string) =>
+    apiGet<AgentRunEnvelope>(`/v1/chat/sessions/${sessionId}/runs/${runId}`),
   approveAgentRun: (
-    taskId: string,
+    sessionId: string,
     runId: string,
     action: AgentApprovalAction,
     patch: Record<string, unknown> = {},
   ) =>
-    apiPost<AgentRunEnvelope>(`/v1/chat/sessions/${taskId}/runs/${runId}/approval`, {
+    apiPost<AgentRunEnvelope>(`/v1/chat/sessions/${sessionId}/runs/${runId}/approval`, {
       action,
       patch,
     }),
@@ -115,27 +124,27 @@ export const sonaApi = {
       prefer_existing_data: true,
       disable_blocking_prompts: true,
     }),
-  wikiQuery: (query: string, taskId?: string, settings?: Partial<MemorySettings>) =>
+  wikiQuery: (query: string, sessionId?: string, settings?: Partial<MemorySettings>) =>
     apiPost<{ answer: string; sources?: unknown[] }>('/v1/wiki/query', {
       query,
-      task_id: taskId,
+      session_id: sessionId,
       topk: settings?.wiki_topk ?? 6,
       style: settings?.wiki_style ?? 'teach',
       weibo_aux: settings?.wiki_weibo_aux ?? true,
     }),
   wikiApprove: (selector: string) => apiPost<Record<string, unknown>>('/v1/wiki/approve', { selector }),
-  caseSearch: (query: string, taskId?: string) =>
-    apiPost<{ answer: string; cases?: unknown[] }>('/v1/cases/search', { query, task_id: taskId }),
+  caseSearch: (query: string, sessionId?: string) =>
+    apiPost<{ answer: string; cases?: unknown[] }>('/v1/cases/search', { query, session_id: sessionId }),
   hotRun: (config_path = '') => apiPost<{ status: string; path: string }>('/v1/hot/run', { config_path }),
   models: () => apiGet<{ models: ModelInfo[] }>('/v1/models'),
   tools: () => apiGet<{ tools: ToolInfo[] }>('/v1/tools'),
   skills: () => apiGet<{ skills: SkillInfo[] }>('/v1/skills'),
   commands: () => apiGet<{ commands: ComposerCommand[] }>('/v1/commands'),
-  memorySettings: (taskId?: string) =>
+  memorySettings: (sessionId?: string) =>
     apiGet<MemorySettingsResponse>(
-      `/v1/settings/memory${taskId ? `?task_id=${encodeURIComponent(taskId)}` : ''}`,
+      `/v1/settings/memory${sessionId ? `?task_id=${encodeURIComponent(sessionId)}` : ''}`,
     ),
-  updateMemorySettings: (body: Partial<MemorySettings> & { task_id?: string }) =>
+  updateMemorySettings: (body: Partial<MemorySettings> & { session_id?: string; task_id?: string }) =>
     fetch(`${API_ROOT}/v1/settings/memory`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -198,11 +207,11 @@ async function readSseStream<T>(
 }
 
 export async function streamAgentRunEvents(
-  taskId: string,
+  sessionId: string,
   runId: string,
   handlers: SseHandlers<AgentRunSseEvent>,
 ) {
-  const response = await fetch(`${API_ROOT}/v1/chat/sessions/${taskId}/runs/${runId}/events`, {
+  const response = await fetch(`${API_ROOT}/v1/chat/sessions/${sessionId}/runs/${runId}/events`, {
     headers: { Accept: 'text/event-stream' },
     signal: handlers.signal,
   });
@@ -213,11 +222,11 @@ export async function streamAgentRunEvents(
 }
 
 export async function streamChatMessage(
-  taskId: string,
+  sessionId: string,
   query: string,
   handlers: SseHandlers<StreamEvent>,
 ) {
-  const response = await fetch(`${API_ROOT}/v1/chat/sessions/${taskId}/messages:stream`, {
+  const response = await fetch(`${API_ROOT}/v1/chat/sessions/${sessionId}/messages:stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, auto_route: true, prefer_existing_data: true }),

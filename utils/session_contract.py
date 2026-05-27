@@ -214,13 +214,13 @@ def _insert_missing_tool_call_messages(messages: List[Dict[str, Any]], *, task_i
 def normalize_session_data(session_data: Dict[str, Any]) -> Dict[str, Any]:
     """Return a schema-v2 session with canonical messages and separate agent events."""
     data = copy.deepcopy(session_data)
-    task_id = str(data.get("task_id") or "")
+    session_id = str(data.get("session_id") or data.get("task_id") or "")
     created_at = str(data.get("created_at") or _now_iso())
 
     agent_events = list(_as_list(data.get("agent_events")))
     canonical_messages: List[Dict[str, Any]] = []
     for index, raw in enumerate(_as_list(data.get("messages"))):
-        msg = _canonical_message(raw, task_id=task_id, index=index)
+        msg = _canonical_message(raw, task_id=session_id, index=index)
         if not msg:
             continue
         event = _legacy_event_from_system_message(msg)
@@ -229,9 +229,11 @@ def normalize_session_data(session_data: Dict[str, Any]) -> Dict[str, Any]:
             continue
         canonical_messages.append(msg)
 
-    canonical_messages = _insert_missing_tool_call_messages(canonical_messages, task_id=task_id)
+    canonical_messages = _insert_missing_tool_call_messages(canonical_messages, task_id=session_id)
 
     data["schema_version"] = SESSION_SCHEMA_VERSION
+    data["session_id"] = session_id
+    data["task_id"] = session_id
     data["created_at"] = created_at
     data["updated_at"] = str(data.get("updated_at") or created_at)
     data["description"] = str(data.get("description") or "")

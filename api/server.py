@@ -86,9 +86,10 @@ v1_router = APIRouter(prefix="/v1", tags=["workflows"])
 
 def _session_envelope(data: Dict[str, Any]) -> SessionEnvelope:
     """Normalize loose session JSON into the public session shape."""
+    session_id = str(data.get("session_id") or data.get("task_id") or "")
     return SessionEnvelope(
         schema_version=int(data.get("schema_version") or 3),
-        task_id=str(data.get("task_id") or ""),
+        session_id=session_id,
         created_at=str(data.get("created_at") or ""),
         updated_at=str(data.get("updated_at") or ""),
         status=str(data.get("status") or "active"),
@@ -183,6 +184,8 @@ def _execution_plan_steps(route_decision: str, route_data: Dict[str, Any]) -> li
         ]
     elif route_decision == "hottopics_workflow":
         steps = ["run_hot_command（热点聚合与态势感知）", "输出热点分析结果"]
+    elif route_decision == "wiki_query":
+        steps = ["wiki_retrieve（检索本地 Wiki/案例/方法论）", "wiki_synthesize（组织答案与来源）"]
     else:
         steps = ["reactagent（按 ReAct 决策按需调用工具）", "返回问答结果"]
 
@@ -266,7 +269,7 @@ def _persist_agent_event(task_id: str, event: Dict[str, Any]) -> None:
 def _agent_run_event_frame(record: AgentRunRecord, event: Dict[str, Any]) -> str:
     payload = dict(event)
     payload.setdefault("run_id", record.run_id)
-    payload.setdefault("task_id", record.task_id)
+    payload.setdefault("session_id", record.session_id)
     payload.setdefault("turn_id", record.turn_id)
     return _sse(str(payload.get("event_type") or "agent_event"), payload)
 
@@ -355,7 +358,13 @@ def _agent_run_stream(record: AgentRunRecord) -> Iterable[str]:
             route_data: Dict[str, Any] = {}
             task_mode = "qa"
             workflow_options: Dict[str, Any] = dict(record.options.get("workflow_options") or {})
-            if record.options.get("auto_route", True):
+            workflow_options["_skip_session_user_message"] = True
+            command = str(record.options.get("command") or "").strip()
+            explicit_mode = str(record.options.get("mode") or "").strip().lower()
+            if explicit_mode == "wiki" or command.lower().startswith("/wiki"):
+                route_decision = "wiki_query"
+                task_mode = "wiki"
+            elif record.options.get("auto_route", True):
                 route_decision, route_data = route_query(record.query, record.task_id)
                 data_result = route_data.get("data_result")
                 route_policy = route_data.get("route_policy", {}) or {}
@@ -393,6 +402,68 @@ def _agent_run_stream(record: AgentRunRecord) -> Iterable[str]:
                     detail=step,
                     payload={"step": f"plan_{index}"},
                 )
+
+            if task_mode == "wiki":
+                from workflow.wiki_cli import answer_wiki_query
+
+                topk = int(workflow_options.get("wiki_topk") or 6)
+                style = str(workflow_options.get("wiki_style") or "teach")
+                weibo_aux = bool(workflow_options.get("wiki_weibo_aux", True))
+                _append_agent_event(
+                    record,
+                    event_queue,
+                    AgentEventType.TOOL_CALL_STARTED,
+                    status="running",
+                    title="wiki_retrieve",
+                    detail=record.query,
+                    payload={
+                        "tool_name": "wiki_retrieve",
+                        "args": {"query": record.query, "topk": topk, "style": style, "weibo_aux": weibo_aux},
+                    },
+                )
+                result = answer_wiki_query(
+                    record.query,
+                    topk=topk,
+                    style=style,
+                    weibo_aux=weibo_aux,
+                    project_root=get_project_root(),
+                )
+                answer = str(result.get("answer") or "未返回回答")
+                sources = result.get("sources") if isinstance(result.get("sources"), list) else []
+                _append_agent_event(
+                    record,
+                    event_queue,
+                    AgentEventType.TOOL_CALL_COMPLETED,
+                    status="completed",
+                    title="wiki_retrieve",
+                    detail=json.dumps({"sources": sources}, ensure_ascii=False),
+                    payload={"tool_name": "wiki_retrieve", "result": {"answer": answer, "sources": sources}},
+                )
+                accumulated = ""
+                chunk_size = 32
+                for start in range(0, len(answer), chunk_size):
+                    accumulated = answer[: start + chunk_size]
+                    _append_agent_event(
+                        record,
+                        event_queue,
+                        AgentEventType.AGENT_MESSAGE_DELTA,
+                        status="running",
+                        title="回复生成",
+                        detail=accumulated,
+                        payload={"content": answer[start : start + chunk_size], "accumulated": accumulated},
+                    )
+                manager.add_message(record.task_id, "assistant", answer)
+                record.status = AgentRunStatus.SUCCEEDED
+                _sync_session_to_task_store(record.task_id)
+                _append_agent_event(
+                    record,
+                    event_queue,
+                    AgentEventType.RUN_COMPLETED,
+                    status="succeeded",
+                    title="工作流完成",
+                    detail="本次 Wiki run 已完成。",
+                )
+                return
 
             def approval_hook(progress_event: Dict[str, Any]) -> Dict[str, Any] | None:
                 step = str(progress_event.get("step") or "")
@@ -527,8 +598,11 @@ def _agent_run_stream(record: AgentRunRecord) -> Iterable[str]:
                     content = _message_content(item.get("message")).strip()
                     if content:
                         streamed_content = content
-                        manager.add_message(record.task_id, "assistant", content)
-                        assistant_persisted = True
+                        if item.get("persist", True):
+                            manager.add_message(record.task_id, "assistant", content)
+                            assistant_persisted = True
+                        else:
+                            assistant_persisted = True
                         _append_agent_event(
                             record,
                             event_queue,
@@ -537,16 +611,29 @@ def _agent_run_stream(record: AgentRunRecord) -> Iterable[str]:
                             title="回复生成",
                             detail=content,
                         )
+                elif item_type == "thinking":
+                    accumulated = str(item.get("accumulated") or item.get("content") or "")
+                    _append_agent_event(
+                        record,
+                        event_queue,
+                        "agent_thinking_delta",
+                        status="running",
+                        title="思考",
+                        detail=accumulated,
+                        payload={"content": item.get("content", ""), "accumulated": accumulated},
+                    )
                 elif item_type == "tool_call":
                     tool_call_id = str(item.get("run_id") or "")
-                    if tool_call_id:
+                    tool_name = str(item.get("tool_name") or "unknown")
+                    persist_tool_context = tool_name not in {"brief_mode_node", "full_report_mode_node"}
+                    if tool_call_id and persist_tool_context:
                         manager.add_message(
                             record.task_id,
                             "assistant",
                             "",
                             tool_calls=[
                                 {
-                                    "name": str(item.get("tool_name") or "unknown"),
+                                    "name": tool_name,
                                     "args": item.get("args", {}),
                                     "id": tool_call_id,
                                 }
@@ -563,22 +650,24 @@ def _agent_run_stream(record: AgentRunRecord) -> Iterable[str]:
                     )
                 elif item_type == "tool_result":
                     result = str(item.get("result") or "")
-                    manager.add_message(
-                        record.task_id,
-                        "tool",
-                        result,
-                        tool_name=str(item.get("tool_name") or "unknown"),
-                        tool_call_id=str(item.get("run_id") or ""),
-                    )
+                    tool_name = str(item.get("tool_name") or "unknown")
+                    if tool_name not in {"brief_mode_node", "full_report_mode_node"}:
+                        manager.add_message(
+                            record.task_id,
+                            "tool",
+                            result,
+                            tool_name=tool_name,
+                            tool_call_id=str(item.get("run_id") or ""),
+                        )
                     event_type = AgentEventType.TOOL_CALL_COMPLETED
-                    if "report" in str(item.get("tool_name") or "").lower() or "report_" in result:
+                    if "report" in tool_name.lower() or "report_" in result:
                         event_type = AgentEventType.ARTIFACT_CREATED
                     _append_agent_event(
                         record,
                         event_queue,
                         event_type,
                         status="completed",
-                        title=str(item.get("tool_name") or "工具结果"),
+                        title=tool_name,
                         detail=result,
                         payload={"tool_name": item.get("tool_name", ""), "result": result, "run_id": item.get("run_id", "")},
                     )
@@ -758,7 +847,7 @@ def _chat_stream(
                 calls = _tool_calls(item.get("message"))
                 is_tool_result_json = bool(content and not calls and _looks_like_tool_result_json(content))
                 if content or calls:
-                    if calls or not is_tool_result_json:
+                    if (calls or not is_tool_result_json) and item.get("persist", True):
                         manager.add_message(task_id, "assistant", content, tool_calls=calls or None)
                     streamed_content = ""
                 yield _sse(
@@ -767,6 +856,16 @@ def _chat_stream(
                         "message_id": item.get("message_id", ""),
                         "content": "" if is_tool_result_json else content,
                         "tool_calls": calls,
+                    },
+                )
+            elif item_type == "thinking":
+                accumulated = str(item.get("accumulated") or item.get("content") or "")
+                yield _sse(
+                    "thinking",
+                    {
+                        "content": item.get("content", ""),
+                        "message_id": item.get("message_id", ""),
+                        "accumulated": accumulated,
                     },
                 )
             elif item_type == "tool_call":
@@ -854,7 +953,7 @@ def _chat_stream(
                 yield _sse(item_type, {"payload": item})
         _persist_streamed_reply()
         _sync_session_to_task_store(task_id)
-        yield _sse("done", {"task_id": task_id})
+        yield _sse("done", {"session_id": task_id})
     except Exception as exc:  # noqa: BLE001
         _persist_streamed_reply()
         _sync_session_to_task_store(task_id, failed=True, error_message=str(exc))
@@ -895,7 +994,7 @@ def create_chat_session(body: SessionCreateRequest) -> SessionEnvelope:
     manager = get_session_manager()
     task_id = manager.create_session(body.initial_query.strip() or "Frontend session")
     ensure_task_dirs(task_id)
-    data = manager.load_session(task_id) or {"task_id": task_id}
+    data = manager.load_session(task_id) or {"session_id": task_id}
     return _session_envelope(data)
 
 
@@ -914,6 +1013,22 @@ def get_chat_session(task_id: str) -> SessionEnvelope:
     if data is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return _session_envelope(data)
+
+
+@v1_router.get("/chat/sessions/{task_id}/report")
+def get_chat_session_report(task_id: str) -> FileResponse:
+    """Return the latest HTML report for a chat session."""
+    raw_path = resolve_report_path_for_task(task_id)
+    if not raw_path:
+        raise HTTPException(status_code=404, detail="Report path not recorded")
+    path = Path(raw_path).expanduser()
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Report file missing on disk")
+    return FileResponse(
+        path,
+        media_type="text/html; charset=utf-8",
+        filename=path.name,
+    )
 
 
 @v1_router.patch("/chat/sessions/{task_id}", response_model=SessionEnvelope)
@@ -979,11 +1094,13 @@ def create_agent_run(task_id: str, body: AgentRunCreateRequest) -> AgentRunEnvel
         raise HTTPException(status_code=422, detail="query is required")
     manager.add_message(task_id, "user", query)
     record = get_agent_run_store().create(
-        task_id=task_id,
+        session_id=task_id,
         query=query,
         options={
             "auto_route": body.auto_route,
             "prefer_existing_data": body.prefer_existing_data,
+            "mode": body.mode,
+            "command": body.command,
             "workflow_options": body.workflow_options,
         },
     )
@@ -1050,11 +1167,12 @@ def query_wiki(body: WikiQueryRequest) -> Dict[str, Any]:
         weibo_aux=body.weibo_aux,
         project_root=get_project_root(),
     )
-    if body.task_id:
+    session_id = body.session_id or body.task_id
+    if session_id:
         manager = get_session_manager()
-        if manager.load_session(body.task_id):
-            manager.add_message(body.task_id, "user", body.query)
-            manager.add_message(body.task_id, "assistant", str(result.get("answer") or ""))
+        if manager.load_session(session_id):
+            manager.add_message(session_id, "user", body.query)
+            manager.add_message(session_id, "assistant", str(result.get("answer") or ""))
     return result
 
 
@@ -1076,11 +1194,12 @@ def search_cases(body: CaseSearchRequest) -> Dict[str, Any]:
     from workflow.wiki_cli import answer_case_query
 
     result = answer_case_query(body.query, project_root=get_project_root())
-    if body.task_id:
+    session_id = body.session_id or body.task_id
+    if session_id:
         manager = get_session_manager()
-        if manager.load_session(body.task_id):
-            manager.add_message(body.task_id, "user", body.query)
-            manager.add_message(body.task_id, "assistant", str(result.get("answer") or ""))
+        if manager.load_session(session_id):
+            manager.add_message(session_id, "user", body.query)
+            manager.add_message(session_id, "assistant", str(result.get("answer") or ""))
     return result
 
 
@@ -1305,7 +1424,7 @@ def update_memory_settings(body: MemorySettingsUpdateRequest) -> MemorySettingsR
     """Patch memory settings and mirror supported prefs into the selected session."""
     current = _memory_settings_model(_load_memory_settings()).model_dump()
     patch = body.model_dump(exclude_unset=True, exclude_none=True)
-    task_id = str(patch.pop("task_id", "") or "").strip()
+    task_id = str(patch.pop("session_id", "") or patch.pop("task_id", "") or "").strip()
     if patch:
         current.update(patch)
         current = _save_memory_settings(_memory_settings_model(current).model_dump())

@@ -45,13 +45,17 @@ import type {
 import type { AgentStep } from '@/types/conversation';
 import { commandInputValue } from '@/features/workspace/sonaToolUi';
 import {
+  isLikelyTestSession,
   mergeSessionList,
   sessionDisplayLabel,
   sessionsAreDuplicates,
 } from '@/features/workspace/sessionIdentity';
+import { hasReportRefs } from '@/features/workspace/reportRefs';
 
 type UtilityTab = 'tasks' | 'profile' | 'models' | 'tools' | 'monitor';
 type SettingsTab = 'skills' | 'memory';
+
+const SIDEBAR_SESSION_LIMIT = 8;
 
 type ActivityEntry = {
   id: string;
@@ -109,7 +113,7 @@ function contentFromResult(value: Record<string, unknown>, keys: string[]) {
   return '';
 }
 
-function sessionTitle(session: { description?: string; initial_query?: string; task_id?: string }) {
+function sessionTitle(session: { description?: string; initial_query?: string; session_id?: string }) {
   return sessionDisplayLabel(session);
 }
 
@@ -121,8 +125,8 @@ export function SonaWorkspace() {
   const { message: messageApi, modal: modalApi } = App.useApp();
   const {
     activeSession,
-    activeReportTaskId,
-    currentTaskId,
+    activeReportSessionId,
+    currentSessionId,
     messages,
     sessions,
     sessionLoading,
@@ -130,7 +134,7 @@ export function SonaWorkspace() {
     tasks,
     addMessage,
     commitStreamReply,
-    setActiveReportTaskId,
+    setActiveReportSessionId,
     setActiveSession,
     setSessions,
     setTasks,
@@ -158,36 +162,64 @@ export function SonaWorkspace() {
   const [sidebarExpand, setSidebarExpand] = useState(true);
   const [settingsMode, setSettingsMode] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('skills');
-  const [activeRun, setActiveRun] = useState<{ runId: string; taskId: string } | null>(null);
+  const [activeRun, setActiveRun] = useState<{ runId: string; sessionId: string } | null>(null);
 
   const chatSession = useChatSession({
     setHomeMode,
     onError: (message) => messageApi.error(message),
   });
 
-  const reportSrc = activeReportTaskId ? `/api/sona/v1/tasks/${activeReportTaskId}/report` : '';
+  const reportSrc = activeReportSessionId ? `/api/sona/v1/chat/sessions/${activeReportSessionId}/report` : '';
   const contextUsage = tokenUsageSummary(activeSession?.token_usage);
 
+  const currentSessionHasReport = useMemo(() => {
+    const messageText = messages.map((item) => item.content).join('\n');
+    const eventText = (activeSession?.agent_events || [])
+      .map((event) => `${event.title || ''}\n${event.detail || ''}\n${formatObject(event.payload || {})}`)
+      .join('\n');
+    return hasReportRefs(`${messageText}\n${eventText}`);
+  }, [activeSession?.agent_events, messages]);
+
   const visibleTasks = useMemo(
-    () => [...tasks].reverse(),
-    [tasks],
+    () => {
+      const next = [...tasks].reverse();
+      if (
+        currentSessionId &&
+        (currentSessionHasReport || activeReportSessionId === currentSessionId) &&
+        !next.some((task) => (task.session_id || task.task_id) === currentSessionId)
+      ) {
+        next.unshift({
+          task_id: currentSessionId,
+          session_id: currentSessionId,
+          status: 'succeeded',
+          artifacts: { report_path: '__session_report__' },
+          error: null,
+        });
+      }
+      return next;
+    },
+    [activeReportSessionId, currentSessionHasReport, currentSessionId, tasks],
   );
 
   const visibleSessions = useMemo(() => {
     const text = searchText.trim().toLowerCase();
     const merged = [activeSession, ...sessions].filter((session): session is NonNullable<typeof session> =>
-      Boolean(session?.task_id),
+      Boolean(session?.session_id),
     );
     const deduped = mergeSessionList(merged);
-    if (!text) return deduped;
+    if (!text) {
+      return deduped
+        .filter((session) => session.session_id === activeSession?.session_id || !isLikelyTestSession(session))
+        .slice(0, SIDEBAR_SESSION_LIMIT);
+    }
     return deduped.filter((session) => {
-      const title = `${sessionTitle(session)} ${session.task_id}`.toLowerCase();
+      const title = `${sessionTitle(session)} ${session.session_id}`.toLowerCase();
       return title.includes(text);
     });
   }, [activeSession, searchText, sessions]);
 
   const conversationTurns = useMemo(() => {
-    const turns = buildConversationTurns(messages);
+    const turns = buildConversationTurns(messages, activeSession?.agent_events || []);
     if (!busy) return turns;
     const last = turns[turns.length - 1];
     if (
@@ -212,7 +244,7 @@ export function SonaWorkspace() {
       return [...turns.slice(0, -1), live];
     }
     return [...turns, live];
-  }, [busy, messages, streamBlocks]);
+  }, [activeSession?.agent_events, busy, messages, streamBlocks]);
 
   function abortActiveStream() {
     streamAbortRef.current?.abort();
@@ -221,8 +253,8 @@ export function SonaWorkspace() {
 
   async function handleAgentApproval(step: AgentStep, action: AgentApprovalAction) {
     const runId = step.runId || activeRun?.runId;
-    const taskId = currentTaskId || activeRun?.taskId;
-    if (!runId || !taskId) {
+    const sessionId = currentSessionId || activeRun?.sessionId;
+    if (!runId || !sessionId) {
       messageApi.error('找不到等待确认的 Agent run');
       return;
     }
@@ -239,7 +271,7 @@ export function SonaWorkspace() {
       }
     }
     try {
-      await sonaApi.approveAgentRun(taskId, runId, action, patch);
+      await sonaApi.approveAgentRun(sessionId, runId, action, patch);
       setRouteStatus(action === 'abort' ? '终止中' : '继续执行');
       pushActivity(action === 'edit' ? '采集方案已修改' : action === 'abort' ? '已请求终止' : '采集方案已确认');
     } catch (error) {
@@ -249,10 +281,10 @@ export function SonaWorkspace() {
     }
   }
 
-  const showChat = Boolean(currentTaskId) && !homeMode;
+  const showChat = Boolean(currentSessionId) && !homeMode;
 
-  function openReportPanel(taskId: string) {
-    setActiveReportTaskId(taskId);
+  function openReportPanel(sessionId: string) {
+    setActiveReportSessionId(sessionId);
     setTopicOpen(true);
     setUtilityTab('tasks');
   }
@@ -276,21 +308,21 @@ export function SonaWorkspace() {
       const nextTasks = taskList.tasks || [];
       setTasks(nextTasks);
       await chatSession.syncCurrentSessionIfNeeded(sessionList);
-      const currentReport = currentTaskId
+      const currentReport = currentSessionId
         ? nextTasks.find(
             (task) =>
-              task.task_id === currentTaskId &&
+              (task.session_id || task.task_id) === currentSessionId &&
               task.status === 'succeeded' &&
               task.artifacts?.report_path,
           )
         : undefined;
       if (currentReport) {
-        setActiveReportTaskId(currentReport.task_id);
-      } else if (!activeReportTaskId) {
+        setActiveReportSessionId(currentReport.session_id || currentReport.task_id);
+      } else if (!activeReportSessionId) {
         const firstReport = nextTasks.find(
           (task) => task.status === 'succeeded' && task.artifacts?.report_path,
         );
-        if (firstReport) setActiveReportTaskId(firstReport.task_id);
+        if (firstReport) setActiveReportSessionId(firstReport.session_id || firstReport.task_id);
       }
     } catch (error) {
       setHealth(null);
@@ -298,16 +330,16 @@ export function SonaWorkspace() {
     }
   }
 
-  async function selectSession(taskId: string) {
+  async function selectSession(sessionId: string) {
     setSettingsMode(false);
     abortActiveStream();
-    if (taskId === currentTaskId && !homeMode) {
-      await chatSession.reloadSession(taskId);
+    if (sessionId === currentSessionId && !homeMode) {
+      await chatSession.reloadSession(sessionId);
       return;
     }
     setRouteStatus('待命');
-    await chatSession.openSession(taskId);
-    router.replace(`/?session=${encodeURIComponent(taskId)}`, { scroll: false });
+    await chatSession.openSession(sessionId);
+    router.replace(`/?session=${encodeURIComponent(sessionId)}`, { scroll: false });
   }
 
   function openUtility(tab: UtilityTab) {
@@ -331,7 +363,7 @@ export function SonaWorkspace() {
     try {
       const [skillResult, memoryResult] = await Promise.all([
         sonaApi.skills(),
-        sonaApi.memorySettings(currentTaskId),
+        sonaApi.memorySettings(currentSessionId),
       ]);
       setSkills(skillResult.skills || []);
       setMemorySettings(memoryResult.settings);
@@ -351,7 +383,7 @@ export function SonaWorkspace() {
     try {
       const result = await sonaApi.updateMemorySettings({
         ...patch,
-        task_id: currentTaskId || undefined,
+        session_id: currentSessionId || undefined,
       });
       setMemorySettings(result.settings);
     } catch (error) {
@@ -373,18 +405,18 @@ export function SonaWorkspace() {
     messageApi.success(success);
   }
 
-  function sessionLink(taskId: string) {
-    return `${window.location.origin}${window.location.pathname}?session=${encodeURIComponent(taskId)}`;
+  function sessionLink(sessionId: string) {
+    return `${window.location.origin}${window.location.pathname}?session=${encodeURIComponent(sessionId)}`;
   }
 
-  async function renameSession(taskId: string) {
-    const current = visibleSessions.find((session) => session.task_id === taskId);
+  async function renameSession(sessionId: string) {
+    const current = visibleSessions.find((session) => session.session_id === sessionId);
     const nextTitle = window.prompt('重命名话题', current ? sessionTitle(current) : '');
     const title = nextTitle?.trim();
     if (!title) return;
     try {
-      const updated = await sonaApi.updateSession(taskId, title);
-      if (currentTaskId === taskId) setActiveSession(updated);
+      const updated = await sonaApi.updateSession(sessionId, title);
+      if (currentSessionId === sessionId) setActiveSession(updated);
       upsertSession(updated);
       messageApi.success('话题已重命名');
     } catch (error) {
@@ -394,13 +426,13 @@ export function SonaWorkspace() {
     }
   }
 
-  function confirmDeleteSession(taskId: string) {
-    const target = visibleSessions.find((session) => session.task_id === taskId);
+  function confirmDeleteSession(sessionId: string) {
+    const target = visibleSessions.find((session) => session.session_id === sessionId);
     const deleteIds = target
       ? visibleSessions
           .filter((session) => sessionsAreDuplicates(session, target))
-          .map((session) => session.task_id)
-      : [taskId];
+          .map((session) => session.session_id)
+      : [sessionId];
     modalApi.confirm({
       centered: true,
       title: null,
@@ -411,7 +443,9 @@ export function SonaWorkspace() {
       okText: '确定',
       cancelText: '取消',
       onOk: async () => {
-        chatSession.rememberDeletedSessionIds(deleteIds);
+        chatSession.rememberDeletedSessions(
+          visibleSessions.filter((session) => deleteIds.includes(session.session_id)),
+        );
         useAppStore.getState().removeSessions(deleteIds);
 
         let remaining = useAppStore.getState().sessions;
@@ -426,10 +460,10 @@ export function SonaWorkspace() {
         }
 
         const visibleRemaining = mergeSessionList(
-          remaining.filter((session) => !deleteIds.includes(session.task_id)),
+          remaining.filter((session) => !deleteIds.includes(session.session_id)),
         );
         setSessions(visibleRemaining);
-        if (currentTaskId && deleteIds.includes(currentTaskId)) {
+        if (currentSessionId && deleteIds.includes(currentSessionId)) {
           await chatSession.handleDeletedCurrent(visibleRemaining);
         }
         messageApi.success('话题已删除');
@@ -437,22 +471,113 @@ export function SonaWorkspace() {
     });
   }
 
-  async function runSessionAction(taskId: string, action: string) {
+  async function runSessionAction(sessionId: string, action: string) {
     if (action === 'rename') {
-      await renameSession(taskId);
+      await renameSession(sessionId);
       return;
     }
     if (action === 'copyId') {
-      await copyText(taskId, '已复制会话 ID');
+      await copyText(sessionId, '已复制会话 ID');
       return;
     }
     if (action === 'copyLink') {
-      await copyText(sessionLink(taskId), '已复制链接');
+      await copyText(sessionLink(sessionId), '已复制链接');
       return;
     }
     if (action === 'delete') {
-      confirmDeleteSession(taskId);
+      confirmDeleteSession(sessionId);
     }
+  }
+
+  async function runStreamingQuery(
+    query: string,
+    options: { command?: string; mode?: string; routeLabel?: string } = {},
+  ) {
+    const session = await chatSession.ensureSession(query, { forceNew: homeMode });
+    const streamSessionId = session.session_id;
+    addMessage({
+      role: 'user',
+      content: query,
+      timestamp: new Date().toISOString(),
+    });
+    setRouteStatus('创建 Agent run');
+    clearStreamBlocks();
+    const controller = new AbortController();
+    streamAbortRef.current = controller;
+    try {
+      const run = await sonaApi.createAgentRun(streamSessionId, {
+        query,
+        auto_route: options.mode ? false : true,
+        command: options.command,
+        mode: options.mode,
+        prefer_existing_data: true,
+        workflow_options: memorySettings?.enable_memory
+          ? {
+              wiki_style: memorySettings.wiki_style,
+              wiki_topk: memorySettings.wiki_topk,
+              wiki_weibo_aux: memorySettings.wiki_weibo_aux,
+            }
+          : {},
+      });
+      setActiveRun({ runId: run.run_id, sessionId: streamSessionId });
+      setRouteStatus(options.routeLabel || 'Agent 运行中');
+      await streamAgentRunEvents(streamSessionId, run.run_id, {
+        signal: controller.signal,
+        onEvent: (item) => {
+          if (useAppStore.getState().currentSessionId !== streamSessionId) return;
+          const event = item.data;
+          setStreamBlocks(applyAgentRunEvent(useAppStore.getState().streamBlocks, event));
+          if (event.event_type === 'agent_step_completed' && event.payload?.route) {
+            setRouteStatus(`${String(event.payload.route || '')} · ${String(event.payload.task_mode || '')}`);
+          }
+          if (event.event_type === 'research_progress') {
+            setRouteStatus('深度研究中');
+            pushActivity(event.title || '深度研究进度', event.detail || '');
+          }
+          if (event.event_type === 'approval_requested') {
+            setRouteStatus('等待确认');
+            pushActivity(event.title || '等待确认', event.detail || '');
+          }
+          if (event.event_type === 'agent_step_started' || event.event_type === 'agent_step_updated') {
+            pushActivity(event.title || '工作流步骤', event.detail || '');
+          }
+          if (event.event_type === 'tool_call_started') {
+            pushActivity(`调用 ${String(event.payload?.tool_name || event.title || '工具')}`);
+          }
+          if (event.event_type === 'tool_call_completed' || event.event_type === 'artifact_created') {
+            pushActivity(
+              `完成 ${String(event.payload?.tool_name || event.title || '工具')}`,
+              String(event.payload?.result || event.detail || '').slice(0, 400),
+            );
+          }
+          if (event.event_type === 'run_completed') {
+            setRouteStatus('完成');
+          }
+          if (event.event_type === 'run_failed') {
+            throw new Error(event.detail || 'Agent run failed');
+          }
+        },
+      });
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      throw error;
+    } finally {
+      if (streamAbortRef.current === controller) {
+        streamAbortRef.current = null;
+      }
+    }
+    if (useAppStore.getState().currentSessionId === streamSessionId) {
+      const { answer } = blocksFromStream(useAppStore.getState().streamBlocks);
+      if (answer && !isStubText(answer)) {
+        commitStreamReply(answer);
+      } else {
+        commitStreamReply('本次后台流程已结束，但没有返回可显示文本。请查看 Agent 过程或重试。');
+      }
+      await chatSession.reloadSession(streamSessionId);
+      clearStreamBlocks();
+    }
+    setActiveRun(null);
+    await refreshStatus();
   }
 
   async function handleSlashCommand(command: string) {
@@ -465,12 +590,12 @@ export function SonaWorkspace() {
       setRouteStatus('事件分析');
       const task = await sonaApi.analyzeEvent(rest);
       if (task.status === 'succeeded') {
-        setActiveReportTaskId(task.task_id);
+        setActiveReportSessionId(task.session_id || task.task_id);
         setTopicOpen(true);
         setUtilityTab('tasks');
         messageApi.success('报告已生成');
       } else {
-        setActiveReportTaskId('');
+        setActiveReportSessionId('');
         const message = task.error?.error_message || `任务状态：${task.status}`;
         setApiError(message);
         messageApi.error(message);
@@ -480,16 +605,7 @@ export function SonaWorkspace() {
     }
     if (cmd === '/wiki') {
       if (!rest) throw new Error('/wiki 需要问题文本');
-      setRouteStatus('知识库');
-      const session = await chatSession.ensureSession(rest, { forceNew: homeMode });
-      addMessage({ role: 'user', content: rest });
-      const result = await sonaApi.wikiQuery(
-        rest,
-        session.task_id,
-        memorySettings?.enable_memory ? memorySettings : undefined,
-      );
-      addMessage({ role: 'assistant', content: result.answer || '未返回回答' });
-      await chatSession.reloadSession(session.task_id);
+      await runStreamingQuery(rest, { command: '/wiki', mode: 'wiki', routeLabel: 'Wiki 检索中' });
       return;
     }
     if (cmd === '/wiki-approve') {
@@ -504,10 +620,10 @@ export function SonaWorkspace() {
       if (!rest) throw new Error('/case 需要检索问题');
       setRouteStatus('案例检索');
       const session = await chatSession.ensureSession(rest, { forceNew: homeMode });
-      addMessage({ role: 'user', content: rest });
-      const result = await sonaApi.caseSearch(rest, session.task_id);
-      addMessage({ role: 'assistant', content: result.answer || '未找到匹配案例' });
-      await chatSession.reloadSession(session.task_id);
+      addMessage({ role: 'user', content: rest, timestamp: new Date().toISOString() });
+      const result = await sonaApi.caseSearch(rest, session.session_id);
+      addMessage({ role: 'assistant', content: result.answer || '未找到匹配案例', timestamp: new Date().toISOString() });
+      await chatSession.reloadSession(session.session_id);
       return;
     }
     if (cmd === '/hot') {
@@ -541,8 +657,8 @@ export function SonaWorkspace() {
     if (cmd === '/memory') {
       const listed = await chatSession.refreshSessions();
       const session = listed[0];
-      if (session?.task_id) {
-        await chatSession.openSession(session.task_id);
+      if (session?.session_id) {
+        await chatSession.openSession(session.session_id);
       }
       setRouteStatus('最近话题');
       return;
@@ -606,89 +722,7 @@ export function SonaWorkspace() {
       if (trimmed.startsWith('/')) {
         await handleSlashCommand(trimmed);
       } else {
-        const session = await chatSession.ensureSession(trimmed, { forceNew: homeMode });
-        const streamTaskId = session.task_id;
-        addMessage({
-          role: 'user',
-          content: trimmed,
-          timestamp: new Date().toISOString(),
-        });
-        setRouteStatus('创建 Agent run');
-        clearStreamBlocks();
-        const controller = new AbortController();
-        streamAbortRef.current = controller;
-        try {
-          const run = await sonaApi.createAgentRun(streamTaskId, {
-            query: trimmed,
-            auto_route: true,
-            prefer_existing_data: true,
-            workflow_options: memorySettings?.enable_memory
-              ? {
-                  wiki_style: memorySettings.wiki_style,
-                  wiki_topk: memorySettings.wiki_topk,
-                  wiki_weibo_aux: memorySettings.wiki_weibo_aux,
-                }
-              : {},
-          });
-          setActiveRun({ runId: run.run_id, taskId: streamTaskId });
-          setRouteStatus('Agent 运行中');
-          await streamAgentRunEvents(streamTaskId, run.run_id, {
-            signal: controller.signal,
-            onEvent: (item) => {
-              if (useAppStore.getState().currentTaskId !== streamTaskId) return;
-              const event = item.data;
-              setStreamBlocks(applyAgentRunEvent(useAppStore.getState().streamBlocks, event));
-              if (event.event_type === 'agent_step_completed' && event.payload?.route) {
-                setRouteStatus(`${String(event.payload.route || '')} · ${String(event.payload.task_mode || '')}`);
-              }
-              if (event.event_type === 'research_progress') {
-                setRouteStatus('深度研究中');
-                pushActivity(event.title || '深度研究进度', event.detail || '');
-              }
-              if (event.event_type === 'approval_requested') {
-                setRouteStatus('等待确认');
-                pushActivity(event.title || '等待确认', event.detail || '');
-              }
-              if (event.event_type === 'agent_step_started' || event.event_type === 'agent_step_updated') {
-                pushActivity(event.title || '工作流步骤', event.detail || '');
-              }
-              if (event.event_type === 'tool_call_started') {
-                pushActivity(`调用 ${String(event.payload?.tool_name || event.title || '工具')}`);
-              }
-              if (event.event_type === 'tool_call_completed' || event.event_type === 'artifact_created') {
-                pushActivity(
-                  `完成 ${String(event.payload?.tool_name || event.title || '工具')}`,
-                  String(event.payload?.result || event.detail || '').slice(0, 400),
-                );
-              }
-              if (event.event_type === 'run_completed') {
-                setRouteStatus('完成');
-              }
-              if (event.event_type === 'run_failed') {
-                throw new Error(event.detail || 'Agent run failed');
-              }
-            },
-          });
-        } catch (error) {
-          if (controller.signal.aborted) return;
-          throw error;
-        } finally {
-          if (streamAbortRef.current === controller) {
-            streamAbortRef.current = null;
-          }
-        }
-        if (useAppStore.getState().currentTaskId === streamTaskId) {
-          const { answer } = blocksFromStream(useAppStore.getState().streamBlocks);
-          if (answer && !isStubText(answer)) {
-            commitStreamReply(answer);
-          } else {
-            commitStreamReply('本次后台流程已结束，但没有返回可显示文本。请查看 Agent 过程或重试。');
-          }
-          await chatSession.reloadSession(streamTaskId);
-          clearStreamBlocks();
-        }
-        setActiveRun(null);
-        await refreshStatus();
+        await runStreamingQuery(trimmed);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -732,11 +766,11 @@ export function SonaWorkspace() {
 
   const handleMessageChange: OnMessageChange = async (messageId, content) => {
     const text = content.trim();
-    if (!currentTaskId || !text || messageId === 'live-stream') return;
+    if (!currentSessionId || !text || messageId === 'live-stream') return;
     const turn = turnForMessage(messageId);
     if (!turn?.messageId) return;
     try {
-      const updated = await sonaApi.updateSessionMessage(currentTaskId, turn.messageId, {
+      const updated = await sonaApi.updateSessionMessage(currentSessionId, turn.messageId, {
         content: text,
         mode: turn.kind === 'user' ? 'branch' : 'message',
       });
@@ -750,8 +784,8 @@ export function SonaWorkspace() {
   };
 
   const handleMessageAction: OnActionsClick = async (action, message: LobeChatMessage) => {
-    if (!currentTaskId || message.id === 'live-stream') return;
-    const taskId = currentTaskId;
+    if (!currentSessionId || message.id === 'live-stream') return;
+    const sessionId = currentSessionId;
     const key = String(action.key || '');
     if (key === 'copy' || key === 'edit') return;
 
@@ -767,7 +801,7 @@ export function SonaWorkspace() {
         okButtonProps: { danger: true },
         cancelText: '取消',
         onOk: async () => {
-          const updated = await sonaApi.deleteSessionMessage(taskId, messageId, 'turn');
+          const updated = await sonaApi.deleteSessionMessage(sessionId, messageId, 'turn');
           await applyUpdatedSession(updated);
           messageApi.success('已删除');
         },
@@ -781,7 +815,7 @@ export function SonaWorkspace() {
       const anchorMessageId = anchor.messageId;
       try {
         const query = anchor.content;
-        const updated = await sonaApi.deleteSessionMessage(taskId, anchorMessageId, 'branch');
+        const updated = await sonaApi.deleteSessionMessage(sessionId, anchorMessageId, 'branch');
         await applyUpdatedSession(updated);
         await executeQuery(query);
       } catch (error) {
@@ -817,7 +851,7 @@ export function SonaWorkspace() {
   return (
     <main className="sonarShell">
       <SonaSidebar
-        activeTaskId={currentTaskId}
+        activeSessionId={currentSessionId}
         apiError={apiError || sessionError || ''}
         expand={sidebarExpand}
         health={health}
@@ -846,10 +880,10 @@ export function SonaWorkspace() {
         <header className="sonarHeader">
           <div className="headerTitle">
             <strong>{settingsMode ? 'Settings' : showChat ? sessionTitle(activeSession || {}) : '首页'}</strong>
-            {!settingsMode && showChat && activeSession?.task_id ? (
+            {!settingsMode && showChat && activeSession?.session_id ? (
               <Dropdown
                 menu={{
-                  onClick: ({ key }) => runSessionAction(activeSession.task_id, key),
+                  onClick: ({ key }) => runSessionAction(activeSession.session_id, key),
                   items: [
                     { icon: <Pencil size={15} />, key: 'rename', label: '重命名' },
                     { icon: <Copy size={15} />, key: 'copyId', label: '复制会话 ID' },
@@ -969,7 +1003,7 @@ export function SonaWorkspace() {
                   </div>
                 ) : (
                   <SonaChatThread
-                    currentTaskId={currentTaskId}
+                    currentSessionId={currentSessionId}
                     onMessageAction={handleMessageAction}
                     onMessageChange={handleMessageChange}
                     onApproval={handleAgentApproval}
@@ -1031,14 +1065,14 @@ export function SonaWorkspace() {
                 <div className="taskList">
                   {visibleTasks.map((task) => (
                     <button
-                      key={task.task_id}
+                      key={task.session_id || task.task_id}
                       onClick={() =>
-                        setActiveReportTaskId(
-                          task.status === 'succeeded' && task.artifacts?.report_path ? task.task_id : '',
+                        setActiveReportSessionId(
+                          task.status === 'succeeded' && task.artifacts?.report_path ? (task.session_id || task.task_id) : '',
                         )
                       }
                     >
-                      <span>{shortId(task.task_id)}</span>
+                      <span>{shortId(task.session_id || task.task_id)}</span>
                       <Tag color={taskStatusColor(task.status)}>{task.status}</Tag>
                       {task.status === 'succeeded' && !task.artifacts?.report_path ? (
                         <small className="muted">未记录报告路径</small>
@@ -1121,3 +1155,4 @@ export function SonaWorkspace() {
     </main>
   );
 }
+

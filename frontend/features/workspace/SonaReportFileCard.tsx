@@ -7,7 +7,7 @@ import { reportApiPath } from '@/features/workspace/reportRefs';
 
 type SonaReportFileCardProps = {
   report: ReportRef;
-  onOpenReport?: (taskId: string) => void;
+  onOpenReport?: (sessionId: string) => void;
 };
 
 async function downloadReport(url: string, fileName: string) {
@@ -29,14 +29,14 @@ async function downloadReport(url: string, fileName: string) {
 }
 
 export function SonaReportFileCard({ report, onOpenReport }: SonaReportFileCardProps) {
-  const previewUrl = report.taskId ? reportApiPath(report.taskId) : undefined;
+  const previewUrl = report.sessionId ? reportApiPath(report.sessionId) : undefined;
   const fileLabel = report.fileType.toUpperCase();
   const canOpen = Boolean(previewUrl);
 
   const openReport = () => {
     if (!previewUrl) return;
-    if (report.taskId && onOpenReport) {
-      onOpenReport(report.taskId);
+    if (report.sessionId && onOpenReport) {
+      onOpenReport(report.sessionId);
       return;
     }
     window.open(previewUrl, '_blank', 'noopener,noreferrer');
@@ -76,7 +76,7 @@ export function SonaReportFileCard({ report, onOpenReport }: SonaReportFileCardP
               size="small"
               onClick={(event) => {
                 event.stopPropagation();
-                onOpenReport(report.taskId!);
+                onOpenReport(report.sessionId!);
               }}
             />
           </Tooltip>
