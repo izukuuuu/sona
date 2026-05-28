@@ -456,18 +456,19 @@ export function buildConversationTurns(messages: ChatMessage[], agentEvents: Age
       } else {
         const blocks = [...rawBlocksFromMessages(messages, runStart, index), ...eventBlocks];
         const { answer, steps } = consolidateRun(blocks);
-        const first = messages[runStart] || message;
+        const first = messages[runStart];
+        const assistantId = first?.id || `assistant-${message.id || message.timestamp || currentUserIndex}`;
         if (!answer && steps.length === 0) {
           continue;
         } else {
           turns.push({
-            id: first.id || `assistant-${first.timestamp || runStart}`,
+            id: assistantId,
             kind: 'assistant',
-            timestamp: parseTimestamp(first, runStart),
+            timestamp: first ? parseTimestamp(first, runStart) : userTimestamp,
             answer: answer || '（无文本回复，请展开 Agent 过程查看工具输出）',
             steps,
-            messageId: first.id,
-            messageIndex: runStart,
+            messageId: first?.id,
+            messageIndex: first ? runStart : undefined,
           });
         }
       }

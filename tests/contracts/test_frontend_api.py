@@ -543,6 +543,59 @@ def test_wiki_agent_run_streams_sources_answer_and_persists(monkeypatch: Any) ->
     assert any(event["event_type"] == "tool_call_completed" for event in session["agent_events"])
 
 
+def test_event_agent_run_uses_canonical_stream_and_persists(monkeypatch: Any) -> None:
+    created = client.post("/v1/chat/sessions", json={"initial_query": "event stream"}).json()
+    session_id = created["session_id"]
+    captured: dict[str, Any] = {}
+
+    def fake_agent_stream(*args: Any, **kwargs: Any):
+        captured["task_mode"] = kwargs.get("task_mode")
+        captured["workflow_options"] = kwargs.get("workflow_options")
+        yield {
+            "type": "workflow_step",
+            "step": "step1",
+            "title": "Step1: extract_search_terms",
+            "detail": "关键词已提取",
+            "payload": {"keywords": ["测试事件"]},
+        }
+        yield {
+            "type": "tool_result",
+            "tool_name": "full_report_mode_node",
+            "result": "file:///tmp/sona-event-report.html",
+            "run_id": "mode-full",
+        }
+        yield {
+            "type": "message",
+            "message": AIMessage(content="已完成舆情事件分析工作流。报告：file:///tmp/sona-event-report.html"),
+        }
+
+    monkeypatch.setattr("agent.reactagent.stream", fake_agent_stream)
+
+    run = client.post(
+        f"/v1/chat/sessions/{session_id}/runs",
+        json={"query": "测试事件舆情分析", "mode": "event", "command": "/event"},
+    )
+    assert run.status_code == 200
+
+    response = client.get(f"/v1/chat/sessions/{session_id}/runs/{run.json()['run_id']}/events")
+    assert response.status_code == 200
+    text = response.text
+    assert "event: agent_step_started" in text
+    assert "event: research_progress" in text
+    assert "event: artifact_created" in text
+    assert "event: agent_message_delta" in text
+    assert "event: run_completed" in text
+
+    assert captured["task_mode"] == "full_report"
+    assert captured["workflow_options"]["report_length"] == "中篇"
+    assert captured["workflow_options"]["_skip_session_user_message"] is True
+
+    session = client.get(f"/v1/chat/sessions/{session_id}").json()
+    assert [message["role"] for message in session["messages"]] == ["user", "assistant"]
+    assert "已完成舆情事件分析工作流" in session["messages"][1]["content"]
+    assert any(event["event_type"] == "research_progress" for event in session["agent_events"])
+
+
 def test_agent_run_archived_session_restores_tool_context(monkeypatch: Any) -> None:
     created = client.post("/v1/chat/sessions", json={"initial_query": "tool context"}).json()
     session_id = created["session_id"]

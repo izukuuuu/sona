@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Switch } from 'antd';
 import {
   Flexbox,
@@ -24,13 +24,31 @@ type SonaMemorySettingsProps = {
   onChange: (patch: Partial<MemorySettings>) => void;
 };
 
+function WikiTopkControl({
+  onChange,
+  value,
+}: Readonly<{
+  onChange: (value: number) => void;
+  value: number;
+}>) {
+  const [draftValue, setDraftValue] = useState(value);
+
+  return (
+    <SliderWithInput
+      max={12}
+      min={1}
+      step={1}
+      size="small"
+      style={{ minWidth: 280 }}
+      value={draftValue}
+      onChange={(nextValue) => setDraftValue(nextValue)}
+      onChangeComplete={onChange}
+    />
+  );
+}
+
 export function SonaMemorySettings({ settings, onChange }: Readonly<SonaMemorySettingsProps>) {
   const values = settings ?? DEFAULT_SETTINGS;
-  const [wikiTopk, setWikiTopk] = useState(values.wiki_topk);
-
-  useEffect(() => {
-    setWikiTopk(values.wiki_topk);
-  }, [values.wiki_topk]);
 
   const items = useMemo<FormItemProps[]>(
     () => [
@@ -62,15 +80,10 @@ export function SonaMemorySettings({ settings, onChange }: Readonly<SonaMemorySe
         label: 'Aggressiveness',
         desc: '对应后端 wiki_topk，值越高检索召回越宽。',
         children: (
-          <SliderWithInput
-            max={12}
-            min={1}
-            step={1}
-            size="small"
-            style={{ minWidth: 280 }}
-            value={wikiTopk}
-            onChange={(value) => setWikiTopk(value)}
-            onChangeComplete={(value) => onChange({ wiki_topk: value })}
+          <WikiTopkControl
+            key={values.wiki_topk}
+            value={values.wiki_topk}
+            onChange={(value) => onChange({ wiki_topk: value })}
           />
         ),
       },
@@ -85,7 +98,7 @@ export function SonaMemorySettings({ settings, onChange }: Readonly<SonaMemorySe
         ),
       },
     ],
-    [onChange, values.enable_memory, values.wiki_style, values.wiki_weibo_aux, wikiTopk],
+    [onChange, values.enable_memory, values.wiki_style, values.wiki_topk, values.wiki_weibo_aux],
   );
 
   return (

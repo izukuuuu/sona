@@ -364,6 +364,10 @@ def _agent_run_stream(record: AgentRunRecord) -> Iterable[str]:
             if explicit_mode == "wiki" or command.lower().startswith("/wiki"):
                 route_decision = "wiki_query"
                 task_mode = "wiki"
+            elif explicit_mode == "event" or command.lower().startswith("/event"):
+                route_decision = "event_analysis_workflow"
+                task_mode = "full_report"
+                workflow_options.setdefault("report_length", "中篇")
             elif record.options.get("auto_route", True):
                 route_decision, route_data = route_query(record.query, record.task_id)
                 data_result = route_data.get("data_result")

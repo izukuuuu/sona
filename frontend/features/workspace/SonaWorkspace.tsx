@@ -43,7 +43,7 @@ import type {
   ToolInfo,
 } from '@/types/sona';
 import type { AgentStep } from '@/types/conversation';
-import { commandInputValue } from '@/features/workspace/sonaToolUi';
+import { commandInputValue, slashStreamingRunOptions } from '@/features/workspace/sonaToolUi';
 import {
   isLikelyTestSession,
   mergeSessionList,
@@ -587,25 +587,12 @@ export function SonaWorkspace() {
 
     if (cmd === '/event') {
       if (!rest) throw new Error('/event 需要事件描述');
-      setRouteStatus('事件分析');
-      const task = await sonaApi.analyzeEvent(rest);
-      if (task.status === 'succeeded') {
-        setActiveReportSessionId(task.session_id || task.task_id);
-        setTopicOpen(true);
-        setUtilityTab('tasks');
-        messageApi.success('报告已生成');
-      } else {
-        setActiveReportSessionId('');
-        const message = task.error?.error_message || `任务状态：${task.status}`;
-        setApiError(message);
-        messageApi.error(message);
-      }
-      await refreshStatus();
+      await runStreamingQuery(rest, slashStreamingRunOptions(cmd));
       return;
     }
     if (cmd === '/wiki') {
       if (!rest) throw new Error('/wiki 需要问题文本');
-      await runStreamingQuery(rest, { command: '/wiki', mode: 'wiki', routeLabel: 'Wiki 检索中' });
+      await runStreamingQuery(rest, slashStreamingRunOptions(cmd));
       return;
     }
     if (cmd === '/wiki-approve') {

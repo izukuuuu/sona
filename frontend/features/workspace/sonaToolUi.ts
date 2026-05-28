@@ -26,3 +26,20 @@ export function commandInputValue(command: ComposerCommand): string {
   }
   return `${command.command} `;
 }
+
+export type SlashStreamingRunOptions = {
+  command: string;
+  mode: string;
+  routeLabel: string;
+};
+
+export function slashStreamingRunOptions(command: string): SlashStreamingRunOptions | undefined {
+  const cmd = command.trim().toLowerCase();
+  if (cmd === '/event') {
+    return { command: '/event', mode: 'event', routeLabel: '事件分析中' };
+  }
+  if (cmd === '/wiki') {
+    return { command: '/wiki', mode: 'wiki', routeLabel: 'Wiki 检索中' };
+  }
+  return undefined;
+}

@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { dedupeMessages, mergeSessionMessages, messagesMatch } from '@/features/workspace/mergeSessionMessages';
 import {
+  applyAgentRunEvent,
   applyStreamEvent,
   blocksFromStream,
   buildConversationTurns,
   isStubText,
 } from '@/features/workspace/conversationTurns';
+import { slashStreamingRunOptions } from '@/features/workspace/sonaToolUi';
 import type { AgentRunEvent, ChatMessage } from '@/types/sona';
 
 describe('mergeSessionMessages', () => {
@@ -111,6 +113,78 @@ describe('applyStreamEvent message', () => {
   });
 });
 
+describe('applyAgentRunEvent', () => {
+  it('renders event workflow progress, approval, artifact, and completion as visible blocks', () => {
+    const common = {
+      run_id: 'run-1',
+      session_id: 'session-1',
+      turn_id: 'turn-1',
+      created_at: '2026-05-28T12:00:00.000Z',
+    };
+    let blocks = applyAgentRunEvent([], {
+      ...common,
+      event_id: 'event-1',
+      event_type: 'research_progress',
+      status: 'running',
+      title: 'Step1: extract_search_terms',
+      detail: '关键词已提取',
+      payload: { kind: 'deep_research_progress', phase: 'research', step: 'step1', status: 'running' },
+    });
+    blocks = applyAgentRunEvent(blocks, {
+      ...common,
+      event_id: 'event-2',
+      event_type: 'approval_requested',
+      status: 'pending',
+      title: '建议搜索采集方案（等待确认）',
+      detail: '{\n  "platforms": ["微博"]\n}',
+      payload: { platforms: ['微博'] },
+    });
+    blocks = applyAgentRunEvent(blocks, {
+      ...common,
+      event_id: 'event-3',
+      event_type: 'artifact_created',
+      status: 'completed',
+      title: 'full_report_mode_node',
+      detail: 'file:///tmp/event-report.html',
+      payload: { tool_name: 'full_report_mode_node', result: 'file:///tmp/event-report.html' },
+    });
+    blocks = applyAgentRunEvent(blocks, {
+      ...common,
+      event_id: 'event-4',
+      event_type: 'run_completed',
+      status: 'succeeded',
+      title: '工作流完成',
+      detail: '本次 Agent run 已完成。',
+      payload: {},
+    });
+
+    const live = blocksFromStream(blocks);
+    expect(live.answer).toContain('建议搜索采集方案');
+    expect(live.steps.some((step) => step.kind === 'research' && step.title.includes('Step1'))).toBe(true);
+    expect(live.steps.some((step) => step.kind === 'approval' && step.status === 'pending')).toBe(true);
+    expect(live.steps.some((step) => step.kind === 'tool' && step.content.includes('event-report.html'))).toBe(true);
+    expect(live.steps.some((step) => step.kind === 'workflow' && step.title === '工作流完成')).toBe(true);
+  });
+});
+
+describe('slashStreamingRunOptions', () => {
+  it('maps /event to the canonical Agent run streaming mode', () => {
+    expect(slashStreamingRunOptions('/event')).toEqual({
+      command: '/event',
+      mode: 'event',
+      routeLabel: '事件分析中',
+    });
+  });
+
+  it('keeps /wiki on the same streaming path', () => {
+    expect(slashStreamingRunOptions('/wiki')).toEqual({
+      command: '/wiki',
+      mode: 'wiki',
+      routeLabel: 'Wiki 检索中',
+    });
+  });
+});
+
 describe('buildConversationTurns', () => {
   it('does not persist a fake loading placeholder when assistant is missing', () => {
     const turns = buildConversationTurns([{ role: 'user', content: '问题' }]);
@@ -182,6 +256,28 @@ describe('buildConversationTurns', () => {
     expect(assistant?.answer).not.toContain('"query"');
     expect(assistant?.steps.some((step) => step.title === '路由与执行计划')).toBe(true);
     expect(assistant?.steps.some((step) => step.title === '系统' && step.content === 'Expecting value')).toBe(true);
+  });
+
+  it('uses a synthetic assistant id when only agent_events exist for a user turn', () => {
+    const turns = buildConversationTurns(
+      [{ id: 'msg_same', role: 'user', content: '舆情分析方法', timestamp: '2026-05-27T20:13:58.000Z' }],
+      [
+        {
+          event_id: 'event-1',
+          run_id: 'run-1',
+          session_id: 'task',
+          turn_id: 'turn',
+          event_type: 'agent_step_completed',
+          title: '工作流完成',
+          detail: '报告已生成',
+          payload: {},
+          created_at: '2026-05-27T20:14:05.000Z',
+        },
+      ],
+    );
+
+    expect(turns.map((turn) => turn.id)).toEqual(['msg_same', 'assistant-msg_same']);
+    expect(new Set(turns.map((turn) => turn.id)).size).toBe(turns.length);
   });
 });
 
