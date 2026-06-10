@@ -61,12 +61,28 @@ export function useChatSession({ setHomeMode, onError }: UseChatSessionOptions) 
     clearCurrentSession,
   } = useAppStore();
 
+  const reportSessionError = useCallback(
+    (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      setSessionError(message);
+      onError?.(message);
+      return message;
+    },
+    [onError, setSessionError],
+  );
+
   const refreshSessions = useCallback(async () => {
-    const result = await sonaApi.listSessions(SESSION_LIST_LIMIT);
-    const listed = mergeSessionList(result.sessions || []);
-    setSessions(listed);
-    return listed;
-  }, [setSessions]);
+    setSessionError(undefined);
+    try {
+      const result = await sonaApi.listSessions(SESSION_LIST_LIMIT);
+      const listed = mergeSessionList(result.sessions || []);
+      setSessions(listed);
+      return listed;
+    } catch (error) {
+      reportSessionError(error);
+      return [];
+    }
+  }, [reportSessionError, setSessionError, setSessions]);
 
   const openSession = useCallback(
     async (sessionId: string): Promise<SessionEnvelope | null> => {
@@ -86,15 +102,13 @@ export function useChatSession({ setHomeMode, onError }: UseChatSessionOptions) 
         return session;
       } catch (error) {
         if (seq !== requestSeq.current) return null;
-        const message = error instanceof Error ? error.message : String(error);
-        setSessionError(message);
-        onError?.(message);
+        reportSessionError(error);
         return null;
       } finally {
         if (seq === requestSeq.current) setSessionLoading(false);
       }
     },
-    [onError, setActiveSession, setHomeMode, setSessionError, setSessionLoading, upsertSession],
+    [reportSessionError, setActiveSession, setHomeMode, setSessionLoading, upsertSession],
   );
 
   const reloadSession = useCallback(
@@ -177,27 +191,31 @@ export function useChatSession({ setHomeMode, onError }: UseChatSessionOptions) 
 
   const hydrateFromUrl = useCallback(
     async (sessionId?: string | null) => {
-      const preferred = sessionId?.trim() || readLastSession();
-      const listed = await refreshSessions();
-      const preferredInList = preferred ? listed.find((item) => item.session_id === preferred) : undefined;
+      try {
+        const preferred = sessionId?.trim() || readLastSession();
+        const listed = await refreshSessions();
+        const preferredInList = preferred ? listed.find((item) => item.session_id === preferred) : undefined;
 
-      if (sessionHasMessages(preferredInList) && preferred) {
-        const session = await openSession(preferred);
-        return Boolean(session);
+        if (sessionHasMessages(preferredInList) && preferred) {
+          const session = await openSession(preferred);
+          return Boolean(session);
+        }
+
+        const fallback = listed.find((item) => sessionHasMessages(item) && item.session_id !== preferred);
+        if (fallback?.session_id) {
+          const session = await openSession(fallback.session_id);
+          return Boolean(session);
+        }
+
+        if (preferred) {
+          const session = await openSession(preferred);
+          return Boolean(session);
+        }
+
+        return false;
+      } catch {
+        return false;
       }
-
-      const fallback = listed.find((item) => sessionHasMessages(item) && item.session_id !== preferred);
-      if (fallback?.session_id) {
-        const session = await openSession(fallback.session_id);
-        return Boolean(session);
-      }
-
-      if (preferred) {
-        const session = await openSession(preferred);
-        return Boolean(session);
-      }
-
-      return false;
     },
     [openSession, refreshSessions],
   );

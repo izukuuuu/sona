@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{REPORT_TITLE}} | 舆情智库深度研判</title>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <style>
         :root {
             --primary: #5d8aa8;         /* 莫兰迪蓝 */
@@ -66,6 +68,29 @@
 
         /* --- Specific Content Elements --- */
         .chart-box { height: 420px; width: 100%; margin-top: 15px; }
+        .emotion-typical-root { margin-top: 6px; margin-bottom: 8px; }
+        .emotion-typical-title { font-size: 0.95rem; font-weight: 700; color: var(--primary-strong); margin: 10px 0 8px; }
+        .emotion-typical-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 12px;
+        }
+        .emotion-typical-card {
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 12px 14px;
+            background: rgba(93, 138, 168, 0.06);
+            border-left: 4px solid var(--primary);
+        }
+        .emotion-typical-card h4 {
+            font-size: 0.88rem;
+            font-weight: 700;
+            color: var(--primary-strong);
+            margin: 0 0 8px;
+        }
+        .emotion-typical-card ul { margin: 0; padding-left: 18px; font-size: 0.82rem; color: var(--text-main); line-height: 1.45; }
+        .emotion-typical-card li { margin-bottom: 6px; word-break: break-word; }
+        .emotion-typical-empty { font-size: 0.85rem; color: var(--text-muted); padding: 8px 0; }
         .wordcloud-box { position: relative; height: 420px; width: 100%; margin-top: 15px; overflow: hidden; border-radius: 12px; background: linear-gradient(180deg, rgba(93,138,168,0.07), rgba(255,255,255,0.8)); border: 1px solid var(--border-color); }
         .wordcloud-box .w {
             position: absolute;
@@ -90,34 +115,43 @@
         .timeline-item { padding: 18px 0; border-bottom: 1px dashed var(--border-color); position: relative; padding-left: 25px; }
         .timeline-item::before { content: "•"; color: var(--accent); position: absolute; left: 0; font-size: 1.8rem; top: 12px; }
         .timeline-time { font-weight: 700; color: var(--primary-strong); margin-bottom: 5px; }
-        .timeline-impact-positive { background: #d4edda; color: #155724; }
-        .timeline-impact-negative { background: #f8d7da; color: #721c24; }
-        .timeline-impact-turn { background: #fff3cd; color: #856404; }
-        .timeline-impact-ferment { background: #d1ecf1; color: #0c5464; }
-        .timeline-evidence { font-size: 12px; color: #6c757d; margin-top: 5px; padding-left: 8px; border-left: 2px solid #4ea5ff; }
-        .emotion-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-top: 12px; }
-        .emotion-card { background: #f8fafc; border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; font-size: 13px; }
-        .emotion-card strong { color: var(--primary-strong); }
-        .action-plan-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
-        .action-plan-card { background: #f8fafc; border: 1px solid var(--border-color); border-left: 4px solid var(--accent); border-radius: 8px; padding: 14px; }
-        .action-plan-card h4 { color: var(--primary-strong); margin-bottom: 8px; }
-        .action-plan-card ul { padding-left: 18px; font-size: 13px; }
-        .action-plan-card li { margin-bottom: 6px; }
 
         /* --- Footer --- */
         footer { text-align: center; padding: 50px; color: var(--text-muted); border-top: 1px solid var(--border-color); font-size: 0.9rem; }
 
         @media (max-width: 1000px) { .grid-2 { grid-template-columns: 1fr; } }
-        @media (max-width: 640px) {
-            .container { padding: 0 14px; }
-            .event-title { font-size: 1.9rem; }
-            .section-title { font-size: 1.35rem; }
-            .card { padding: 18px; }
-            .chart-box, .wordcloud-box { height: 340px; }
+
+        .report-export-toolbar {
+            position: fixed;
+            top: 14px;
+            right: 14px;
+            z-index: 9999;
+            display: flex;
+            gap: 8px;
+        }
+        .report-export-toolbar button {
+            border: 1px solid var(--border-color);
+            background: var(--card-bg);
+            color: var(--text-main);
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        }
+        .report-export-toolbar button:hover { background: #f8fafc; }
+        @media print {
+            .no-print,
+            .report-export-toolbar { display: none !important; }
         }
     </style>
 </head>
 <body>
+
+<div class="report-export-toolbar no-print">
+    <button type="button" onclick="exportReportPDF(event)">导出PDF</button>
+    <button type="button" onclick="exportReportImage(event)">导出图片</button>
+</div>
 
 <div class="container">
     <header>
@@ -135,7 +169,7 @@
         <div class="kpi-card"><div class="kpi-label">总样本量</div><div class="kpi-value">{{KPI_TOTAL}}</div></div>
         <div class="kpi-card"><div class="kpi-label">影响指数</div><div class="kpi-value">{{KPI_EFFECTIVE}}</div></div>
         <div class="kpi-card"><div class="kpi-label">整体态度</div><div class="kpi-value">{{KPI_POS_RATIO}}</div></div>
-        <div class="kpi-card"><div class="kpi-label">目前阶段</div><div class="kpi-value">{{PHASE_STATUS}}</div></div>
+        <div class="kpi-card"><div class="kpi-label">目前阶段</div><div class="kpi-value">{{KPI_NEG_RATIO}}</div></div>
     </div>
 
     <section>
@@ -155,21 +189,30 @@
 
         <div class="grid-2">
             <div class="card">
-                <h3>情感倾向分析结果</h3>
-                <div id="sentimentChart" class="chart-box"></div>
-                <div id="emotionMechanism" class="analysis-summary" style="display:none;"></div>
+                <h3>情感倾向（正面 / 负面 / 中立）</h3>
+                <div id="sentimentChartCoarse" class="chart-box"></div>
                 <div class="analysis-summary">
                     <h3>简要分析结论</h3>
                     <ul>{{CHART_SENTIMENT_ANALYSIS}}</ul>
                 </div>
             </div>
             <div class="card">
-                <h3>关键时间线节点 (按发生时序)</h3>
-                <ul class="timeline-list" id="timelineList"></ul>
+                <h3>细粒度情绪（愤怒 / 焦虑 / 质疑 / 同情 / 嘲讽 / 支持 / 其他）</h3>
+                <div id="sentimentFineChart" class="chart-box"></div>
+                <div id="emotionTypicalExpressionsRoot" class="emotion-typical-root" aria-label="各情绪典型原文摘录"></div>
                 <div class="analysis-summary">
                     <h3>简要分析结论</h3>
-                    <ul>{{CHART_TIMELINE_ANALYSIS}}</ul>
+                    <ul>{{CHART_SENTIMENT_FINE_ANALYSIS}}</ul>
                 </div>
+            </div>
+        </div>
+
+        <div class="card" style="margin-bottom: 25px;">
+            <h3>关键时间线节点 (按发生时序)</h3>
+            <ul class="timeline-list" id="timelineList"></ul>
+            <div class="analysis-summary">
+                <h3>简要分析结论</h3>
+                <ul>{{CHART_TIMELINE_ANALYSIS}}</ul>
             </div>
         </div>
 
@@ -257,7 +300,6 @@
             <div class="analysis-summary">
                 <ul>{{RESPONSE_ANALYSIS_BULLETS}}</ul>
             </div>
-            <div style="margin-top:18px;">{{RESPONSE_ACTION_PLAN}}</div>
         </div>
 
         <div class="card">
@@ -290,13 +332,6 @@
         subText: '#6b7280',
         split: 'rgba(107,114,128,0.16)',
     };
-    const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#39;'
-    }[ch]));
 
     function baseToolbox() {
         return {
@@ -308,6 +343,62 @@
         };
     }
 
+    function setChartToolboxVisible(visible) {
+        Object.values(chartInstances).forEach((chart) => {
+            if (!chart || typeof chart.setOption !== 'function') {
+                return;
+            }
+            chart.setOption({ toolbox: { show: !!visible } }, { replaceMerge: ['toolbox'] });
+        });
+    }
+
+    async function exportReportImage(event) {
+        if (event) {
+            event.preventDefault();
+        }
+        setChartToolboxVisible(false);
+        try {
+            const target = document.querySelector('.container') || document.body;
+            const canvas = await html2canvas(target, {
+                backgroundColor: '#ffffff',
+                scale: 2,
+                useCORS: true,
+                logging: false,
+            });
+            const link = document.createElement('a');
+            link.download = 'report.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        } finally {
+            setChartToolboxVisible(true);
+        }
+    }
+
+    async function exportReportPDF(event) {
+        if (event) {
+            event.preventDefault();
+        }
+        setChartToolboxVisible(false);
+        try {
+            const target = document.querySelector('.container') || document.body;
+            const canvas = await html2canvas(target, {
+                backgroundColor: '#ffffff',
+                scale: 2,
+                useCORS: true,
+                logging: false,
+            });
+            const img = canvas.toDataURL('image/jpeg', 0.92);
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF('p', 'mm', 'a4');
+            const pageWidth = pdf.internal.pageSize.getWidth();
+            const imgHeight = (canvas.height * pageWidth) / canvas.width;
+            pdf.addImage(img, 'JPEG', 0, 0, pageWidth, imgHeight);
+            pdf.save('report.pdf');
+        } finally {
+            setChartToolboxVisible(true);
+        }
+    }
+
     function axisStyle() {
         return {
             axisLine: { lineStyle: { color: 'rgba(43,47,54,0.28)' } },
@@ -317,9 +408,12 @@
     }
 
     function initAll() {
-        // 1. 情感饼图
-        chartInstances.sentiment = echarts.init(document.getElementById('sentimentChart'));
-        chartInstances.sentiment.setOption({
+        // 1a. 情感三维饼图（正/负/中立）
+        const finePieData = (REPORT_DATA && REPORT_DATA.charts && Array.isArray(REPORT_DATA.charts.sentimentFine))
+            ? REPORT_DATA.charts.sentimentFine
+            : [];
+        chartInstances.sentimentCoarse = echarts.init(document.getElementById('sentimentChartCoarse'));
+        chartInstances.sentimentCoarse.setOption({
             color: ECHARTS_THEME.colors,
             animationDuration: 900,
             tooltip: { trigger: 'item', confine: true, formatter: '{b}<br/>数量：{c}<br/>占比：{d}%' },
@@ -333,29 +427,88 @@
             }]
         });
 
-        const emotionBox = document.getElementById('emotionMechanism');
-        const sentimentDetail = REPORT_DATA.sentimentDetail || {};
-        const emotionAnalysis = sentimentDetail.emotionAnalysis || {};
-        const emotionKeys = Object.keys(emotionAnalysis);
-        if (emotionBox && (emotionKeys.length || sentimentDetail.negativeDrivers)) {
-            let emotionHtml = '<h3>情绪结构与负面/质疑驱动</h3>';
-            if (sentimentDetail.negativeDrivers) {
-                emotionHtml += `<p style="margin-bottom:10px;"><strong>上升原因：</strong>${escapeHtml(sentimentDetail.negativeDrivers)}</p>`;
-            }
-            if (emotionKeys.length) {
-                emotionHtml += '<div class="emotion-grid">';
-                emotionKeys.forEach(k => {
-                    const item = emotionAnalysis[k] || {};
-                    emotionHtml += `<div class="emotion-card"><strong>${escapeHtml(k)}</strong><br>计数：${escapeHtml(item.count || 0)}<br><span>${escapeHtml(item.typical_expression || '无')}</span></div>`;
-                });
-                emotionHtml += '</div>';
-            }
-            if (sentimentDetail.emotionValidation && sentimentDetail.emotionValidation.sample_size) {
-                emotionHtml += `<p style="margin-top:10px; font-size:12px; color:#6b7280;">抽样校验：样本 ${escapeHtml(sentimentDetail.emotionValidation.sample_size)} 条；${escapeHtml(sentimentDetail.emotionValidation.note || '')}</p>`;
-            }
-            emotionBox.innerHTML = emotionHtml;
-            emotionBox.style.display = 'block';
+        // 1b. 细粒度情绪饼图（六字 + 其他）
+        const fineEl = document.getElementById('sentimentFineChart');
+        if (fineEl && finePieData.length) {
+            chartInstances.sentimentFine = echarts.init(fineEl);
+            chartInstances.sentimentFine.setOption({
+                color: ECHARTS_THEME.colors,
+                animationDuration: 900,
+                tooltip: { trigger: 'item', confine: true, formatter: '{b}<br/>数量：{c}<br/>占比：{d}%' },
+                legend: { type: 'scroll', bottom: '2%', left: 'center', textStyle: { color: ECHARTS_THEME.subText, fontSize: 11 } },
+                toolbox: baseToolbox(),
+                series: [{
+                    type: 'pie',
+                    radius: ['36%', '66%'],
+                    center: ['50%', '46%'],
+                    itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 2 },
+                    label: { formatter: '{b}\n{d}%', fontSize: 11, color: ECHARTS_THEME.subText },
+                    emphasis: { scale: true, scaleSize: 6, itemStyle: { shadowBlur: 14, shadowColor: 'rgba(0,0,0,0.16)' } },
+                    data: finePieData
+                }]
+            });
+        } else if (fineEl) {
+            fineEl.style.display = 'none';
         }
+
+        // 1c. 细粒度情绪典型表达（模块化卡片；优先 sentiment JSON / row_scores 摘录，每类最多 1 条）
+        (function renderEmotionTypicalExpressions() {
+            const root = document.getElementById('emotionTypicalExpressionsRoot');
+            if (!root) return;
+            const exprMap = (REPORT_DATA && REPORT_DATA.charts && REPORT_DATA.charts.emotionTypicalExpressions)
+                ? REPORT_DATA.charts.emotionTypicalExpressions
+                : {};
+            const order = ['愤怒', '焦虑', '质疑', '同情', '嘲讽', '支持', '其他'];
+            const borderColors = {
+                '愤怒': '#ef4444', '焦虑': '#f59e0b', '质疑': '#8b5cf6', '同情': '#ec4899',
+                '嘲讽': '#64748b', '支持': '#1e90ff', '其他': '#94a3b8',
+            };
+            const fineCounts = {};
+            finePieData.forEach((d) => {
+                if (d && d.name != null) fineCounts[String(d.name)] = Number(d.value) || 0;
+            });
+            const hasExpr = order.some((k) => Array.isArray(exprMap[k]) && exprMap[k].length);
+            const hasFineSlice = order.some((k) => (fineCounts[k] || 0) > 0);
+            if (!hasExpr && !hasFineSlice) {
+                root.innerHTML = '<p class="emotion-typical-empty">（暂无典型表达：目录中缺少情感分析 JSON，或样本无可用正文预览）</p>';
+                return;
+            }
+            root.innerHTML = '';
+            const title = document.createElement('div');
+            title.className = 'emotion-typical-title';
+            title.textContent = '各情绪典型表达（每类 1 条原文摘录）';
+            root.appendChild(title);
+            const grid = document.createElement('div');
+            grid.className = 'emotion-typical-grid';
+            order.forEach((em) => {
+                const items = Array.isArray(exprMap[em]) ? exprMap[em] : [];
+                const sliceN = fineCounts[em] || 0;
+                if (!items.length && sliceN <= 0) return;
+                const card = document.createElement('div');
+                card.className = 'emotion-typical-card';
+                card.style.borderLeftColor = borderColors[em] || 'var(--primary)';
+                const h = document.createElement('h4');
+                h.textContent = em;
+                card.appendChild(h);
+                const ul = document.createElement('ul');
+                const one = items.length ? items.slice(0, 1) : [];
+                if (one.length) {
+                    one.forEach((line) => {
+                        const li = document.createElement('li');
+                        li.textContent = String(line || '');
+                        ul.appendChild(li);
+                    });
+                } else {
+                    const li = document.createElement('li');
+                    li.className = 'emotion-typical-miss';
+                    li.textContent = '该情绪在统计中有占比，但暂无可读正文摘录（多为过短或无预览文本）。';
+                    ul.appendChild(li);
+                }
+                card.appendChild(ul);
+                grid.appendChild(card);
+            });
+            root.appendChild(grid);
+        })();
 
         // 2. 渠道占比饼图（若数据缺失则隐藏）
         const channelEl = document.getElementById('channelChart');
@@ -571,8 +724,6 @@
             legend: { top: '2%', left: 'center', data: ['五维评估'], textStyle: { color: ECHARTS_THEME.subText } },
             toolbox: baseToolbox(),
             radar: {
-                center: ['50%', '58%'],
-                radius: '64%',
                 indicator: [
                     { name: '量', max: 10 }, { name: '质', max: 10 },
                     { name: '人', max: 10 }, { name: '场', max: 10 }, { name: '效', max: 10 }
@@ -598,16 +749,6 @@
         const lifecycleDates = REPORT_DATA.charts.lifecycle.dates || [];
         const lifecycleValues = REPORT_DATA.charts.lifecycle.values || [];
         const lifecycleBoundaries = REPORT_DATA.charts.lifecycle.boundaries || [];
-        const timelineMarkPoints = (REPORT_DATA.timeline || []).map(item => {
-            const idx = lifecycleDates.findIndex(d => String(d).slice(0, 10) === String(item.time || '').slice(0, 10));
-            if (idx < 0) return null;
-            return {
-                name: item.event || '关键节点',
-                coord: [lifecycleDates[idx], lifecycleValues[idx] || 0],
-                value: item.event || '关键节点',
-                itemStyle: { color: item.impact === '负面' ? '#EE6666' : (item.impact === '转折' ? '#FAC858' : '#5470C6') },
-            };
-        }).filter(Boolean).slice(0, 8);
         chartInstances.lifecycle.setOption({
             color: ECHARTS_THEME.colors,
             animationDuration: 1000,
@@ -633,30 +774,13 @@
                     lineStyle: { type: 'dashed', color: 'rgba(107,114,128,0.6)', width: 1.2 },
                     data: lifecycleBoundaries.map(b => ({ xAxis: b.xAxis, name: b.name })),
                 },
-                markPoint: {
-                    symbolSize: 42,
-                    label: { formatter: ({ data }) => data && data.name ? data.name : '', fontSize: 10 },
-                    data: timelineMarkPoints,
-                },
             }]
         });
 
         // 渲染时间线
         const tlList = document.getElementById('timelineList');
         REPORT_DATA.timeline.forEach(item => {
-            let evidenceHtml = item.evidence ? `<div class="timeline-evidence">证据：${escapeHtml(item.evidence)}</div>` : '';
-            let impactClass = '';
-            let impactText = '';
-            if (item.impact === '正面') { impactClass = 'timeline-impact-positive'; impactText = '正面'; }
-            else if (item.impact === '负面') { impactClass = 'timeline-impact-negative'; impactText = '负面'; }
-            else if (item.impact === '转折') { impactClass = 'timeline-impact-turn'; impactText = '转折'; }
-            else if (item.impact === '发酵') { impactClass = 'timeline-impact-ferment'; impactText = '发酵'; }
-            let impactHtml = impactText ? `<span class="timeline-impact ${impactClass}" style="font-size:11px; margin-left:8px; padding:2px 8px; border-radius:12px;">${impactText}</span>` : '';
-            tlList.innerHTML += `<li class="timeline-item">
-                <div class="timeline-time">${escapeHtml(item.time)} ${impactHtml}</div>
-                <div class="timeline-event" style="font-weight:500;">${escapeHtml(item.event)}</div>
-                ${evidenceHtml}
-            </li>`;
+            tlList.innerHTML += `<li class="timeline-item"><div class="timeline-time">${item.time}</div><div>${item.event}</div></li>`;
         });
     }
 

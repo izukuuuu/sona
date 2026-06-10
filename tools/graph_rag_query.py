@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import os
 import re
+import socket
 from functools import lru_cache
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import yaml
 from langchain_core.tools import tool
@@ -44,6 +47,15 @@ def graph_rag_enabled_in_config() -> bool:
     return s not in ("0", "false", "no", "n", "off", "")
 
 
+def _first_env(*names: str) -> str:
+    """返回第一个非空环境变量值。"""
+    for name in names:
+        value = str(os.environ.get(name, "") or "").strip()
+        if value:
+            return value
+    return ""
+
+
 def _get_neo4j_settings() -> Tuple[str, str, str, str]:
     """Neo4j 连接配置：环境变量优先，其次 config.yaml，最后本地默认值。"""
     try:
@@ -60,10 +72,10 @@ def _get_neo4j_settings() -> Tuple[str, str, str, str]:
     config_password = str(auth[1] if len(auth) > 1 else config.get("password", "") or "").strip()
     config_database = str(config.get("database", "") or "").strip()
 
-    uri = os.environ.get("SONA_NEO4J_URI") or config_uri or "bolt://127.0.0.1:7687"
-    user = os.environ.get("SONA_NEO4J_USER") or config_user or "neo4j"
-    password = os.environ.get("SONA_NEO4J_PASSWORD") or config_password or "bjtu1234"
-    database = os.environ.get("SONA_NEO4J_DATABASE") or config_database or ""
+    uri = _first_env("SONA_NEO4J_URI", "NEO4J_URI") or config_uri or "bolt://127.0.0.1:7687"
+    user = _first_env("SONA_NEO4J_USER", "NEO4J_USERNAME", "NEO4J_USER") or config_user or "neo4j"
+    password = _first_env("SONA_NEO4J_PASSWORD", "NEO4J_PASSWORD") or config_password or "bjtu1234"
+    database = _first_env("SONA_NEO4J_DATABASE", "NEO4J_DATABASE") or config_database or ""
     return uri, user, password, database
 
 
@@ -346,6 +358,30 @@ def _get_neo4j_driver(*, connection_timeout: Optional[float] = None):
         return None
 
 
+def _build_neo4j_error_hint(uri: str, error: str) -> str:
+    """为常见 Aura / DNS / 配置问题生成更直白的提示。"""
+    hint_parts: List[str] = []
+    parsed = urlparse(uri)
+    host = (parsed.hostname or "").strip()
+    lowered = error.lower()
+
+    if "routing information" in lowered:
+        hint_parts.append("Aura 路由信息获取失败，通常是 URI 不对、网络被代理劫持，或目标实例当前不可达。")
+    if host:
+        try:
+            resolved = socket.gethostbyname(host)
+            ip = ipaddress.ip_address(resolved)
+            if ip in ipaddress.ip_network("198.18.0.0/15"):
+                hint_parts.append(
+                    f"当前域名解析到了保留地址 {resolved}，更像本机代理/DNS 接管，而不是真实的 Neo4j Aura 公网地址。"
+                )
+        except Exception:
+            pass
+    if parsed.scheme == "neo4j+s" and host.endswith(".databases.neo4j.io"):
+        hint_parts.append("若这是 Aura，请优先核对控制台里的完整连接 URI，并确认驱动流量没有被 HTTP/TUN 代理拦截。")
+    return " ".join(dict.fromkeys(hint_parts))
+
+
 def check_neo4j_connection(timeout_sec: float = 5.0) -> Dict[str, Any]:
     """
     Neo4j 连接健康检查。
@@ -366,7 +402,12 @@ def check_neo4j_connection(timeout_sec: float = 5.0) -> Dict[str, Any]:
             value = session.run("RETURN 1 AS ok").single()
         return {"ok": bool(value and value.get("ok") == 1), "status": "connected", **info}
     except Exception as exc:
-        return {"ok": False, "status": "connection_failed", "error": str(exc), **info}
+        error = str(exc)
+        result = {"ok": False, "status": "connection_failed", "error": error, **info}
+        hint = _build_neo4j_error_hint(info.get("uri", ""), error)
+        if hint:
+            result["hint"] = hint
+        return result
     finally:
         try:
             driver.close()

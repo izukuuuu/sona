@@ -66,22 +66,32 @@ def _load_graph_database_class() -> Any:
 
 
 def _load_neo4j_config(database_override: str = "") -> Neo4jConfig:
-    """从环境变量加载 Neo4j 配置（``NEO4J_URI`` / ``NEO4J_USERNAME`` / ``NEO4J_PASSWORD`` / ``NEO4J_DATABASE``）。
+    """从环境变量加载 Neo4j 配置（优先 ``NEO4J_*``，兼容回退到 ``SONA_NEO4J_*``）。
 
-    ``/wiki`` 熊猫图谱预取与 ``neo4j_qa`` 工具共用此套变量，与 Graph RAG 的 ``SONA_NEO4J_*`` 分离。
+    兼容 ``NEO4J_USERNAME`` / ``NEO4J_USER`` 两种命名，减少 Aura 接入时的重复配置成本。
     """
     get_env_config()
-    uri = (os.getenv("NEO4J_URI") or "").strip()
-    username = (os.getenv("NEO4J_USERNAME") or "").strip()
-    password = (os.getenv("NEO4J_PASSWORD") or "").strip()
-    database = (database_override or os.getenv("NEO4J_DATABASE") or "neo4j").strip()
+    uri = (os.getenv("NEO4J_URI") or os.getenv("SONA_NEO4J_URI") or "").strip()
+    username = (
+        os.getenv("NEO4J_USERNAME")
+        or os.getenv("NEO4J_USER")
+        or os.getenv("SONA_NEO4J_USER")
+        or ""
+    ).strip()
+    password = (os.getenv("NEO4J_PASSWORD") or os.getenv("SONA_NEO4J_PASSWORD") or "").strip()
+    database = (
+        database_override
+        or os.getenv("NEO4J_DATABASE")
+        or os.getenv("SONA_NEO4J_DATABASE")
+        or "neo4j"
+    ).strip()
     missing: List[str] = []
     if not uri:
-        missing.append("NEO4J_URI")
+        missing.append("NEO4J_URI/SONA_NEO4J_URI")
     if not username:
-        missing.append("NEO4J_USERNAME")
+        missing.append("NEO4J_USERNAME(or NEO4J_USER)/SONA_NEO4J_USER")
     if not password:
-        missing.append("NEO4J_PASSWORD")
+        missing.append("NEO4J_PASSWORD/SONA_NEO4J_PASSWORD")
     if missing:
         raise ValueError(f"缺少 Neo4j 环境变量: {', '.join(missing)}")
     return Neo4jConfig(uri=uri, username=username, password=password, database=database)

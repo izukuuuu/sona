@@ -26,30 +26,82 @@ type SseHandlers<T> = {
   signal?: AbortSignal;
 };
 
+function isJsonLikeContentType(contentType: string | null) {
+  if (!contentType) return false;
+  return /\bapplication\/(.+\+)?json\b/i.test(contentType);
+}
+
+function looksLikeJson(text: string) {
+  const trimmed = text.trim();
+  return trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed === 'null';
+}
+
+function previewText(text: string, maxLength = 160) {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
+}
+
+function unexpectedResponseError(response: Response, text: string, contentType: string | null) {
+  const typeLabel = contentType || 'unknown content-type';
+  const snippet = previewText(text);
+  const prefix = response.ok
+    ? `Expected JSON response but received ${typeLabel}`
+    : `Request failed with non-JSON response (${response.status} ${response.statusText || 'Error'}, ${typeLabel})`;
+  const suffix = snippet ? ` Response preview: ${snippet}` : '';
+  return new Error(`${prefix}.${suffix}`);
+}
+
+function readStringField(value: unknown, field: 'detail' | 'message') {
+  if (!value || typeof value !== 'object') return undefined;
+  const candidate = (value as Record<string, unknown>)[field];
+  return typeof candidate === 'string' ? candidate : undefined;
+}
+
 async function parseJson<T>(response: Response): Promise<T> {
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+  const contentType = response.headers.get('content-type');
+  const shouldParseJson = Boolean(text) && (isJsonLikeContentType(contentType) || looksLikeJson(text));
+  let data: unknown = null;
+
+  if (shouldParseJson) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw unexpectedResponseError(response, text, contentType);
+    }
+  }
+
   if (!response.ok) {
     const message =
-      typeof data?.detail === 'string'
-        ? data.detail
-        : typeof data?.message === 'string'
-          ? data.message
-          : response.statusText;
+      readStringField(data, 'detail') ??
+      readStringField(data, 'message') ??
+      unexpectedResponseError(response, text, contentType).message;
     throw new Error(message || `HTTP ${response.status}`);
   }
+
+  if (text && data === null) {
+    throw unexpectedResponseError(response, text, contentType);
+  }
+
   return data as T;
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_ROOT}${path}`, { cache: 'no-store' });
+  const response = await fetch(`${API_ROOT}${path}`, {
+    cache: 'no-store',
+    headers: { Accept: 'application/json' },
+  });
   return parseJson<T>(response);
 }
 
 export async function apiPost<T>(path: string, body: JsonValue): Promise<T> {
   const response = await fetch(`${API_ROOT}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify(body),
   });
   return parseJson<T>(response);
@@ -62,11 +114,17 @@ export const sonaApi = {
   updateSession: (sessionId: string, description: string) =>
     fetch(`${API_ROOT}/v1/chat/sessions/${sessionId}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({ description }),
     }).then((response) => parseJson<SessionEnvelope>(response)),
   deleteSession: (sessionId: string) =>
-    fetch(`${API_ROOT}/v1/chat/sessions/${sessionId}`, { method: 'DELETE' })
+    fetch(`${API_ROOT}/v1/chat/sessions/${sessionId}`, {
+      method: 'DELETE',
+      headers: { Accept: 'application/json' },
+    })
       .then((response) => parseJson<{ sessions: SessionEnvelope[] }>(response)),
   getSession: (sessionId: string) => apiGet<SessionEnvelope>(`/v1/chat/sessions/${sessionId}`),
   updateSessionMessage: (
@@ -76,13 +134,19 @@ export const sonaApi = {
   ) =>
     fetch(`${API_ROOT}/v1/chat/sessions/${sessionId}/messages/${messageId}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify(body),
     }).then((response) => parseJson<SessionEnvelope>(response)),
   deleteSessionMessage: (sessionId: string, messageId: string, mode: SessionMessageEditMode = 'turn') =>
     fetch(
       `${API_ROOT}/v1/chat/sessions/${sessionId}/messages/${messageId}?mode=${encodeURIComponent(mode)}`,
-      { method: 'DELETE' },
+      {
+        method: 'DELETE',
+        headers: { Accept: 'application/json' },
+      },
     ).then((response) => parseJson<SessionEnvelope>(response)),
   createAgentRun: (
     sessionId: string,
@@ -147,7 +211,10 @@ export const sonaApi = {
   updateMemorySettings: (body: Partial<MemorySettings> & { session_id?: string; task_id?: string }) =>
     fetch(`${API_ROOT}/v1/settings/memory`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify(body),
     }).then((response) => parseJson<MemorySettingsResponse>(response)),
   monitorList: () => apiGet<{ topics: Record<string, unknown>[] }>('/v1/monitor/topics'),
