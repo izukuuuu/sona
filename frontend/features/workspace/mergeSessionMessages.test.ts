@@ -159,11 +159,126 @@ describe('applyAgentRunEvent', () => {
     });
 
     const live = blocksFromStream(blocks);
-    expect(live.answer).toContain('建议搜索采集方案');
+    expect(live.answer).toContain('event-report.html');
     expect(live.steps.some((step) => step.kind === 'research' && step.title.includes('Step1'))).toBe(true);
-    expect(live.steps.some((step) => step.kind === 'approval' && step.status === 'pending')).toBe(true);
+    expect(live.steps.some((step) => step.kind === 'approval' && step.status === 'approved')).toBe(true);
     expect(live.steps.some((step) => step.kind === 'tool' && step.content.includes('event-report.html'))).toBe(true);
     expect(live.steps.some((step) => step.kind === 'workflow' && step.title === '工作流完成')).toBe(true);
+  });
+
+  it('keeps long research progress and updates a running step when completed', () => {
+    const common = {
+      run_id: 'run-1',
+      session_id: 'session-1',
+      turn_id: 'turn-1',
+      created_at: '2026-05-28T12:00:00.000Z',
+      event_type: 'research_progress',
+    };
+    let blocks = applyAgentRunEvent([], {
+      ...common,
+      event_id: 'collect-running',
+      status: 'running',
+      title: 'Step4: data_collect (微博)',
+      detail: '平台=微博 -> data_collect',
+      payload: {
+        kind: 'deep_research_progress',
+        phase: 'data_collect',
+        step: 'step4:data_collect:微博',
+        status: 'running',
+      },
+    });
+    blocks = applyAgentRunEvent(blocks, {
+      ...common,
+      event_id: 'collect-completed',
+      status: 'completed',
+      title: '平台采集完成 微博',
+      detail: 'rows=1780',
+      payload: {
+        kind: 'deep_research_progress',
+        phase: 'data_collect',
+        rows: 1780,
+        step: 'step4:data_collect:微博',
+        status: 'completed',
+      },
+    });
+    for (let index = 5; index <= 9; index += 1) {
+      blocks = applyAgentRunEvent(blocks, {
+        ...common,
+        event_id: `event-${index}`,
+        status: 'running',
+        title: `Step${index}: stage`,
+        detail: `detail-${index}`,
+        payload: {
+          kind: 'deep_research_progress',
+          phase: index === 9 ? 'judgement' : 'stats',
+          step: `step${index}`,
+          status: 'running',
+        },
+      });
+    }
+
+    const live = blocksFromStream(blocks);
+    const collectSteps = live.steps.filter((step) => step.kind === 'research' && step.phase === 'data_collect');
+    expect(collectSteps).toHaveLength(1);
+    expect(collectSteps[0].status).toBe('completed');
+    expect(collectSteps[0].title).toContain('平台采集完成');
+    expect(live.steps.filter((step) => step.kind === 'research')).toHaveLength(6);
+    expect(live.steps.some((step) => step.kind === 'research' && step.title.includes('Step9'))).toBe(true);
+  });
+
+  it('promotes final report artifact urls into the assistant answer', () => {
+    const common = {
+      run_id: 'run-1',
+      session_id: 'session-1',
+      turn_id: 'turn-1',
+      created_at: '2026-06-17T02:04:56.000Z',
+    };
+    let blocks = applyAgentRunEvent([], {
+      ...common,
+      event_id: 'approval',
+      event_type: 'approval_requested',
+      status: 'pending',
+      title: '建议搜索采集方案（等待确认）',
+      detail: JSON.stringify({
+        analysis_workers: 2,
+        data_collect_workers: 1,
+        data_num_workers: 2,
+        keyword_combination_mode: '逐词检索并合并（当前实现）',
+        platforms: ['微博'],
+        return_count: 2000,
+        searchWords_preview: ['美伊冲突'],
+        time_range: '2026-05-17 23:59:59;2026-06-16 23:59:59',
+      }, null, 2),
+      payload: {},
+    });
+    blocks = applyAgentRunEvent(blocks, {
+      ...common,
+      event_id: 'artifact-report',
+      event_type: 'artifact_created',
+      status: 'completed',
+      title: 'full_report_mode_node',
+      detail: 'file:///F:/sona-master/sandbox/2489061a-1f16-4c6b-becd-3a27a75717a7/%E7%BB%93%E6%9E%9C%E6%96%87%E4%BB%B6/report_20260617_100455.html',
+      payload: {
+        result: 'file:///F:/sona-master/sandbox/2489061a-1f16-4c6b-becd-3a27a75717a7/%E7%BB%93%E6%9E%9C%E6%96%87%E4%BB%B6/report_20260617_100455.html',
+        tool_name: 'full_report_mode_node',
+      },
+    });
+    blocks = applyAgentRunEvent(blocks, {
+      ...common,
+      event_id: 'run-done',
+      event_type: 'run_completed',
+      status: 'succeeded',
+      title: '工作流完成',
+      detail: '已完成舆情事件分析工作流。报告：file:///F:/sona-master/sandbox/2489061a-1f16-4c6b-becd-3a27a75717a7/%E7%BB%93%E6%9E%9C%E6%96%87%E4%BB%B6/report_20260617_100455.html',
+      payload: {},
+    });
+
+    const live = blocksFromStream(blocks);
+    expect(live.answer).toContain('report_20260617_100455.html');
+    expect(live.answer).toContain('file:///F:/sona-master/sandbox');
+    expect(live.answer).not.toContain('keyword_combination_mode');
+    const approval = live.steps.find((step) => step.kind === 'approval');
+    expect(approval?.status).toBe('approved');
   });
 });
 

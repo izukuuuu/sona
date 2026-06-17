@@ -583,6 +583,7 @@ textarea {
 .sonaAssistantInlinePanels {
   display: grid;
   width: min(100%, 760px);
+  margin-top: 10px;
   gap: 8px;
 }
 
@@ -735,9 +736,6 @@ textarea {
 
 .sonaResearchPanel {
   width: 100%;
-  padding: 12px;
-  border: 1px solid var(--accent-line);
-  border-radius: 8px;
   background: var(--accent-tint);
 }
 
@@ -745,7 +743,7 @@ textarea {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 10px;
+  width: 100%;
   color: var(--accent-dark);
 }
 
@@ -769,7 +767,7 @@ textarea {
 
 .sonaResearchItem {
   display: grid;
-  grid-template-columns: 12px minmax(0, 1fr);
+  grid-template-columns: 20px minmax(0, 1fr);
   gap: 10px;
   align-items: start;
 }
@@ -780,6 +778,15 @@ textarea {
   margin-top: 6px;
   border-radius: 999px;
   background: var(--accent);
+}
+
+.sonaResearchLoading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  min-height: 20px;
+  color: var(--accent-dark);
 }
 
 .sonaResearchItem--completed .sonaResearchDot {

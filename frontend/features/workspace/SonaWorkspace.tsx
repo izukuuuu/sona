@@ -122,6 +122,7 @@ export function SonaWorkspace() {
   const searchParams = useSearchParams();
   const hydratedRef = useRef(false);
   const streamAbortRef = useRef<AbortController | null>(null);
+  const activityIdRef = useRef(0);
   const { message: messageApi, modal: modalApi } = App.useApp();
   const {
     activeSession,
@@ -290,8 +291,9 @@ export function SonaWorkspace() {
   }
 
   function pushActivity(label: string, detail?: string) {
+    const id = `${Date.now()}-${activityIdRef.current++}`;
     setActivityLog((items) => [
-      { detail, id: `${Date.now()}-${items.length}`, label },
+      { detail, id, label },
       ...items.slice(0, 5),
     ]);
   }

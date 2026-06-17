@@ -27,6 +27,24 @@ from utils.session_manager import get_session_manager
 client = TestClient(app)
 
 
+def test_research_progress_payload_preserves_stage_status_and_phase() -> None:
+    payload = server._research_progress_payload(
+        {
+            "step": "step4:data_collect:微博",
+            "title": "平台采集完成 微博",
+            "detail": "rows=1780",
+            "status": "completed",
+            "payload": {"phase": "data_collect", "rows": 1780},
+        }
+    )
+
+    assert payload["kind"] == "deep_research_progress"
+    assert payload["step"] == "step4:data_collect:微博"
+    assert payload["phase"] == "data_collect"
+    assert payload["status"] == "completed"
+    assert payload["detail"] == "rows=1780"
+
+
 def test_health_and_session_endpoints() -> None:
     health = client.get("/health")
     assert health.status_code == 200
@@ -673,6 +691,24 @@ def test_agent_run_does_not_archive_internal_mode_node(monkeypatch: Any) -> None
     assert session["messages"][-1]["content"] == "完成"
 
 
+def test_agent_full_report_no_data_message_is_not_rewrapped(monkeypatch: Any) -> None:
+    import agent.reactagent as reactagent
+
+    final_text = "这次在 微博 没有抓取到可用数据，所以暂时无法继续生成舆情分析报告。"
+
+    monkeypatch.setattr(
+        "cli.event_analysis_workflow.run_full_report_mode",
+        lambda **kwargs: final_text,
+    )
+
+    items = list(reactagent._stream_mode_flow("测试事件", "task-no-data", "full_report"))
+    message_items = [item for item in items if item.get("type") == "message"]
+    tool_result_items = [item for item in items if item.get("type") == "tool_result"]
+
+    assert tool_result_items[-1]["result"] == final_text
+    assert message_items[-1]["message"].content == final_text
+
+
 def test_agent_run_events_reconnect_waits_for_live_events() -> None:
     created = client.post("/v1/chat/sessions", json={"initial_query": "reconnect"}).json()
     run = client.post(
@@ -740,6 +776,43 @@ def test_analyze_event_failure_is_logged(monkeypatch: Any) -> None:
     log_text = log_path.read_text(encoding="utf-8")
     assert "API_EVENT_WORKFLOW_FAILED" in log_text
     assert "playwright executable missing" in log_text
+
+
+def test_analyze_event_no_data_returns_user_facing_message(monkeypatch: Any) -> None:
+    monkeypatch.setattr(event_runner, "route_query", lambda query, session_id: ("event", {}))
+
+    final_text = (
+        "这次在 微博 没有抓取到可用数据，所以暂时无法继续生成舆情分析报告。\n"
+        "采集反馈：未抓取到任何数据。建议：1) 尝试调整检索词，使用更宽泛或相近的关键词；"
+        "2) 扩大时间范围；3) 尝试使用同义词或相关词汇\n"
+        "建议你这样调整后重试：\n"
+        "1. 尝试更宽泛或更接近用户原话的检索词。\n"
+        "2. 扩大时间范围。\n"
+        "3. 换用同义词、别称或相关话题词。\n"
+        "当前已关闭历史回退（SONA_ALLOW_HISTORY_FALLBACK=false），所以这次不会自动改用历史数据。"
+    )
+
+    def no_data_workflow(
+        user_query: str,
+        task_id: str,
+        session_manager: Any,
+        **kwargs: Any,
+    ) -> str:
+        session_manager.add_message(task_id, "user", user_query)
+        session_manager.add_message(task_id, "assistant", final_text)
+        return final_text
+
+    monkeypatch.setattr(event_runner, "run_event_analysis_workflow", no_data_workflow)
+
+    envelope = event_runner.run_analyze_event(
+        AnalyzeEventRequest(query="测试事件", disable_blocking_prompts=True),
+    )
+
+    assert envelope.status == TaskStatus.SUCCEEDED
+    assert envelope.error is None
+    session = get_session_manager().load_session(envelope.session_id) or {}
+    messages = messages_from_session_data(session)
+    assert str(messages[-1].content) == final_text
 
 
 def test_wiki_and_case_endpoints(monkeypatch: Any) -> None:

@@ -201,10 +201,18 @@ def _research_phase(step: str, title: str) -> str:
         return "approval"
     if "extract" in text or "step1" in text or "search_terms" in text:
         return "plan"
-    if "data_num" in text or "data_collect" in text or "step3" in text or "step4" in text:
-        return "search"
-    if "dataset" in text or "stats" in text or "timeline" in text or "sentiment" in text:
+    if "data_collect" in text or "step4" in text:
+        return "data_collect"
+    if "data_num" in text or "step3" in text:
+        return "data_num"
+    if "dataset" in text or "step5" in text:
+        return "dataset_summary"
+    if "stats" in text or "distribution" in text or "portrait" in text or "step6." in text:
+        return "stats"
+    if "timeline" in text or "sentiment" in text or "step7" in text:
         return "analyze"
+    if "judgement" in text or "user_judgement" in text or "step9" in text:
+        return "judgement"
     if "interpretation" in text or "rag" in text or "wiki" in text or "oprag" in text:
         return "synthesize"
     if "report" in text or "done" in text:
@@ -217,7 +225,8 @@ def _research_progress_payload(progress_event: Dict[str, Any]) -> Dict[str, Any]
     title = str(progress_event.get("title") or "")
     payload = progress_event.get("payload") if isinstance(progress_event.get("payload"), dict) else {}
     phase = str(payload.get("phase") or _research_phase(step, title))
-    status = "completed" if step == "done" else "running"
+    raw_status = str(progress_event.get("status") or payload.get("status") or "").strip().lower()
+    status = raw_status if raw_status in {"running", "completed", "failed"} else ("completed" if step == "done" else "running")
     return {
         "kind": "deep_research_progress",
         "phase": phase,
@@ -938,6 +947,7 @@ def _chat_stream(
                     "title": str(item.get("title") or ""),
                     "detail": str(item.get("detail") or ""),
                     "payload": item.get("payload", {}),
+                    "status": str(item.get("status") or "running"),
                 }
                 manager.add_message(
                     task_id,
@@ -951,6 +961,7 @@ def _chat_stream(
                         "title": workflow_event["title"],
                         "detail": workflow_event["detail"],
                         "payload": workflow_event["payload"],
+                        "status": workflow_event["status"],
                     },
                 )
             else:

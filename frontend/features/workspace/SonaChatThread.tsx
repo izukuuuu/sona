@@ -5,6 +5,7 @@ import { Button } from 'antd';
 import { AccordionItem } from '@lobehub/ui';
 import {
   ChatList,
+  LoadingDots,
   type ChatMessage as LobeChatMessage,
   type OnActionsClick,
   type OnMessageChange,
@@ -52,18 +53,30 @@ function AgentStepsPanel({ steps }: { steps: AgentStep[] }) {
 
 function ResearchProgressPanel({ steps }: { steps: AgentStep[] }) {
   if (!steps.length) return null;
-  const ordered = steps.slice(-8);
+  const hasRunning = steps.some((step) => step.status === 'running');
   return (
-    <section className="sonaResearchPanel">
-      <div className="sonaResearchHeader">
-        <Activity size={15} />
-        <strong>深度研究进度</strong>
-        <span>{ordered.filter((step) => step.status === 'completed').length}/{ordered.length}</span>
-      </div>
+    <AccordionItem
+      classNames={{ base: 'sonaResearchPanel' }}
+      defaultExpand={hasRunning}
+      itemKey="research-progress"
+      padding={8}
+      title={(
+        <span className="sonaResearchHeader">
+          <Activity size={15} />
+          <strong>深度研究进度</strong>
+          <span>{steps.filter((step) => step.status === 'completed').length}/{steps.length}</span>
+        </span>
+      )}
+      variant="outlined"
+    >
       <ol className="sonaResearchList">
-        {ordered.map((step) => (
+        {steps.map((step) => (
           <li key={step.id} className={`sonaResearchItem sonaResearchItem--${step.status || 'running'}`}>
-            <span className="sonaResearchDot" />
+            {step.status === 'running' ? (
+              <span className="sonaResearchLoading"><LoadingDots /></span>
+            ) : (
+              <span className="sonaResearchDot" />
+            )}
             <div>
               <div className="sonaResearchTitle">
                 <strong>{step.title}</strong>
@@ -74,7 +87,7 @@ function ResearchProgressPanel({ steps }: { steps: AgentStep[] }) {
           </li>
         ))}
       </ol>
-    </section>
+    </AccordionItem>
   );
 }
 
@@ -86,18 +99,39 @@ function ApprovalPanel({
   step: AgentStep;
 }) {
   const pending = step.status === 'pending';
-  return (
-    <section className="sonaApprovalPanel">
-      <div className="sonaApprovalHeader">
-        <strong>{step.title}</strong>
-        <span>{step.status === 'recorded' ? '已记录' : '等待处理'}</span>
-      </div>
+  const statusText =
+    step.status === 'approved' ? '已确认' :
+      step.status === 'rejected' ? '已终止' :
+        step.status === 'recorded' ? '已记录' :
+          '等待处理';
+  const body = (
+    <>
       <pre>{step.content}</pre>
       <div className="sonaApprovalActions">
         <Button disabled={!pending || !onApproval} icon={<Check size={14} />} onClick={() => onApproval?.(step, 'accept')} size="small">采用</Button>
         <Button disabled={!pending || !onApproval} icon={<PencilLine size={14} />} onClick={() => onApproval?.(step, 'edit')} size="small">请求修改</Button>
         <Button disabled={!pending || !onApproval} danger icon={<X size={14} />} onClick={() => onApproval?.(step, 'abort')} size="small">终止</Button>
       </div>
+    </>
+  );
+  return (
+    <section className="sonaApprovalPanel">
+      <div className="sonaApprovalHeader">
+        <strong>{step.title}</strong>
+        <span>{statusText}</span>
+      </div>
+      {pending ? body : (
+        <AccordionItem
+          classNames={{ base: 'sonaApprovalResolved' }}
+          defaultExpand={false}
+          itemKey={`approval-${step.id}`}
+          padding={0}
+          title="查看采集方案"
+          variant="borderless"
+        >
+          {body}
+        </AccordionItem>
+      )}
     </section>
   );
 }
@@ -180,20 +214,24 @@ export function SonaChatThread({
             const scoped = extra as LobeExtra;
             if (scoped.turn.kind !== 'assistant') return null;
             return (
-              <div className="sonaAssistantMessageContent">
-                <AssistantInlinePanels onApproval={scoped.onApproval} turn={scoped.turn} />
-                <SonaChatAnswer
-                  answer={content}
-                  currentSessionId={scoped.currentSessionId}
-                  onOpenReport={scoped.onOpenReport}
-                  streaming={id === 'live-stream'}
-                />
-              </div>
+              <SonaChatAnswer
+                answer={content}
+                currentSessionId={scoped.currentSessionId}
+                onOpenReport={scoped.onOpenReport}
+                streaming={id === 'live-stream'}
+              />
             );
           },
           user: ({ content, createAt, editableContent }) => (
             <span title={formatChatTime(createAt)}>{editableContent || content}</span>
           ),
+        }}
+        renderMessagesExtra={{
+          assistant: ({ extra }) => {
+            const scoped = extra as LobeExtra;
+            if (scoped.turn.kind !== 'assistant') return null;
+            return <AssistantInlinePanels onApproval={scoped.onApproval} turn={scoped.turn} />;
+          },
         }}
         showAvatar
         showTitle

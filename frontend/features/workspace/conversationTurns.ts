@@ -1,5 +1,6 @@
 import type { AgentStep, ConversationTurn, TurnBlock } from '@/types/conversation';
 import type { AgentRunEvent, ChatMessage, StreamEvent } from '@/types/sona';
+import { hasReportRefs } from '@/features/workspace/reportRefs';
 
 const STUB_PATTERN = /^已执行\s+\/(wiki|case|monitor|hot|event)\b/i;
 const APPROVAL_PATTERN =
@@ -137,6 +138,24 @@ function isNearDuplicate(a: string, b: string): boolean {
   return false;
 }
 
+function settleApprovals(
+  blocks: TurnBlock[],
+  status: 'approved' | 'rejected' = 'approved',
+  decision = status === 'rejected' ? 'abort' : 'accept',
+  approvalEventId = '',
+) {
+  return blocks.map((block) => {
+    if (block.type !== 'approval') return block;
+    if (approvalEventId && block.approvalEventId && block.approvalEventId !== approvalEventId) return block;
+    if (block.status === 'approved' || block.status === 'rejected') return block;
+    return { ...block, decision, status };
+  });
+}
+
+function replaceBlocks(target: TurnBlock[], source: TurnBlock[]) {
+  target.splice(0, target.length, ...source);
+}
+
 function rawBlocksFromMessages(messages: ChatMessage[], start: number, end: number): TurnBlock[] {
   const blocks: TurnBlock[] = [];
   for (let i = start; i < end; i += 1) {
@@ -208,6 +227,15 @@ function rawBlocksFromMessages(messages: ChatMessage[], start: number, end: numb
               callId: typeof nestedPayload.run_id === 'string' ? nestedPayload.run_id : undefined,
             });
           } else if (eventType === 'approval_resolved') {
+            replaceBlocks(
+              blocks,
+              settleApprovals(
+                blocks,
+                String(nestedPayload.action || '') === 'abort' ? 'rejected' : 'approved',
+                String(nestedPayload.action || ''),
+                typeof nestedPayload.approval_event_id === 'string' ? nestedPayload.approval_event_id : '',
+              ),
+            );
             blocks.push({
               type: 'workflow',
               step,
@@ -296,6 +324,9 @@ function consolidateRun(blocks: TurnBlock[]): { answer: string; steps: AgentStep
       const parsed = parseToolPayload(block.content);
       const name = parsed.toolName || block.toolName;
       const urls = extractUrls(parsed.clean);
+      if (hasReportRefs(parsed.clean)) {
+        textParts.push(`报告：${parsed.clean}`);
+      }
       if (urls.size === 1 && parsed.clean.length < 120) {
         pushStep({
           kind: 'tool',
@@ -356,13 +387,18 @@ function consolidateRun(blocks: TurnBlock[]): { answer: string; steps: AgentStep
     if (block.type === 'workflow') {
       const body =
         block.content.length > 2400 ? `${block.content.slice(0, 2400)}…` : block.content;
+      if (hasReportRefs(body)) {
+        textParts.push(body);
+      }
       pushStep({ kind: 'workflow', title: block.title, content: body });
     }
   }
 
   let answer = '';
   if (textParts.length) {
-    answer = textParts.reduce((best, cur) => (cur.length > best.length ? cur : best), '');
+    answer =
+      [...textParts].reverse().find((part) => hasReportRefs(part)) ||
+      textParts.reduce((best, cur) => (cur.length > best.length ? cur : best), '');
     for (let i = 0; i < textParts.length - 1; i += 1) {
       const part = textParts[i];
       if (part.length > 48 && !isNearDuplicate(part, answer)) {
@@ -661,6 +697,9 @@ export function applyAgentRunEvent(blocks: TurnBlock[], event: AgentRunEvent): T
 
   if (event.event_type === 'research_progress') {
     const step = String(payload.step || nestedPayload.step || event.event_id || '');
+    if (step && step !== 'collect_plan' && step !== 'step2') {
+      replaceBlocks(next, settleApprovals(next));
+    }
     const nextBlock: TurnBlock = {
       type: 'research',
       step,
@@ -694,15 +733,12 @@ export function applyAgentRunEvent(blocks: TurnBlock[], event: AgentRunEvent): T
 
   if (event.event_type === 'approval_resolved') {
     const approvalEventId = typeof payload.approval_event_id === 'string' ? payload.approval_event_id : '';
-    return next.map((block) => {
-      if (block.type !== 'approval') return block;
-      if (approvalEventId && block.approvalEventId !== approvalEventId) return block;
-      return {
-        ...block,
-        status: payload.action === 'abort' ? 'rejected' : 'approved',
-        decision: String(payload.action || ''),
-      };
-    });
+    return settleApprovals(
+      next,
+      payload.action === 'abort' ? 'rejected' : 'approved',
+      String(payload.action || ''),
+      approvalEventId,
+    );
   }
 
   if (event.event_type === 'tool_call_started') {
@@ -716,6 +752,9 @@ export function applyAgentRunEvent(blocks: TurnBlock[], event: AgentRunEvent): T
   }
 
   if (event.event_type === 'tool_call_completed' || event.event_type === 'artifact_created') {
+    if (event.event_type === 'artifact_created' || hasReportRefs(String(payload.result || event.detail || ''))) {
+      replaceBlocks(next, settleApprovals(next));
+    }
     next.push({
       type: 'tool_result',
       toolName: String(payload.tool_name || event.title || '工具'),
@@ -736,6 +775,9 @@ export function applyAgentRunEvent(blocks: TurnBlock[], event: AgentRunEvent): T
     event.event_type === 'agent_step_completed' ||
     event.event_type === 'run_completed'
   ) {
+    if (event.event_type === 'run_completed') {
+      replaceBlocks(next, settleApprovals(next));
+    }
     next.push({
       type: 'workflow',
       step: String(payload.step || nestedPayload.step || event.event_type),

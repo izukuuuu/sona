@@ -14,6 +14,7 @@ def emit_workflow_progress(
     title: str,
     detail: str = "",
     payload: Optional[Dict[str, Any]] = None,
+    status: str = "running",
 ) -> Any:
     """Notify API layer of a pipeline step (CLI may still print separately)."""
     if not callback:
@@ -24,5 +25,6 @@ def emit_workflow_progress(
             "title": title,
             "detail": detail[:8000] if detail else "",
             "payload": payload or {},
+            "status": status,
         }
     )

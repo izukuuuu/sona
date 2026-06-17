@@ -1464,6 +1464,38 @@ def _preview_oprag_snapshot(snapshot: Dict[str, Any]) -> str:
     return "\n".join(lines).strip()
 
 
+def _is_no_data_collect_error(error_text: str) -> bool:
+    text = str(error_text or "").strip()
+    if not text:
+        return False
+    return "未抓取到任何数据" in text
+
+
+def _build_no_data_user_message(
+    *,
+    platforms: List[str],
+    last_error: str,
+    history_fallback_enabled: bool,
+) -> str:
+    platform_text = "、".join([str(p).strip() for p in platforms if str(p).strip()]) or "当前平台"
+    lines = [
+        f"这次在 {platform_text} 没有抓取到可用数据，所以暂时无法继续生成舆情分析报告。",
+    ]
+    if last_error:
+        lines.append(f"采集反馈：{last_error}")
+    lines.extend(
+        [
+            "建议你这样调整后重试：",
+            "1. 尝试更宽泛或更接近用户原话的检索词。",
+            "2. 扩大时间范围。",
+            "3. 换用同义词、别称或相关话题词。",
+        ]
+    )
+    if not history_fallback_enabled:
+        lines.append("当前已关闭历史回退（SONA_ALLOW_HISTORY_FALLBACK=false），所以这次不会自动改用历史数据。")
+    return "\n".join(lines).strip()
+
+
 def _make_progress() -> Progress:
     return Progress(
         SpinnerColumn(),
@@ -2558,6 +2590,7 @@ def run_event_analysis_pipeline(
         step="start",
         title="进入舆情事件分析工作流",
         detail=f"task_id={task_id}",
+        payload={"phase": "start"},
     )
     if debug:
         console.print(f"[green]🔧 进入 EventAnalysisWorkflow[/green] task_id={task_id}")
@@ -2571,6 +2604,7 @@ def run_event_analysis_pipeline(
         detail: str = "",
         *,
         payload: Optional[Dict[str, Any]] = None,
+        status: str = "running",
     ) -> None:
         emit_workflow_progress(
             progress_callback,
@@ -2578,11 +2612,24 @@ def run_event_analysis_pipeline(
             title=title,
             detail=detail,
             payload=payload,
+            status=status,
         )
         if debug:
             console.print(f"[bold]{title}[/bold]")
             if detail:
                 console.print(f"[dim]{detail[:4000]}[/dim]")
+
+    def _stage(
+        step_id: str,
+        title: str,
+        detail: str = "",
+        *,
+        phase: str,
+        status: str = "running",
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        stage_payload = {"phase": phase, **(payload or {})}
+        _step(step_id, title, detail, payload=stage_payload, status=status)
 
     if not skip_session_user_message:
         session_manager.add_message(task_id, "user", user_query)
@@ -2911,7 +2958,7 @@ def run_event_analysis_pipeline(
             step="collect_plan",
         )
 
-    _step("step2", "Step2: confirm_collect_plan")
+    _stage("step2", "Step2: confirm_collect_plan", phase="approval")
     if isinstance(web_collect_plan_decision, dict):
         decision_action = str(web_collect_plan_decision.get("action") or "accept")
         if decision_action == "abort":
@@ -3184,6 +3231,19 @@ def run_event_analysis_pipeline(
             os.environ["SONA_DATA_NUM_MAX_WORKERS"] = str(data_num_workers)
             os.environ["SONA_DATA_COLLECT_MAX_WORKERS"] = str(data_collect_workers)
             os.environ["SONA_ANALYSIS_MAX_WORKERS"] = str(analysis_workers)
+            _stage(
+                "step3:data_num",
+                "Step3: data_num",
+                f"platforms={selected_platforms} return_count={return_count}",
+                phase="data_num",
+                payload={
+                    "platforms": selected_platforms,
+                    "return_count": return_count,
+                    "data_num_workers": data_num_workers,
+                    "data_collect_workers": data_collect_workers,
+                    "analysis_workers": analysis_workers,
+                },
+            )
 
             boolean_strategy = str(suggested_collect_plan.get("boolean_strategy") or "")
             boolean_mode = "AND" if boolean_strategy.upper().startswith("AND") else "OR"
@@ -3218,10 +3278,18 @@ def run_event_analysis_pipeline(
             query_for_retry: str,
         ) -> tuple[bool, str]:
             nonlocal last_collect_error
+            collect_step_id = f"step4:data_collect:{platform}"
             if debug:
                 console.print(f"[dim]平台={platform} -> data_collect[/dim]")
             _progress_advance()
             _progress_step(f"Step4: data_collect ({platform})")
+            _stage(
+                collect_step_id,
+                f"Step4: data_collect ({platform})",
+                f"平台={platform} -> data_collect",
+                phase="data_collect",
+                payload={"platform": platform, "time_range": time_range_used},
+            )
 
             collect_json, data_collect_elapsed = _invoke_tool_with_timing(
                 data_collect,
@@ -3296,6 +3364,18 @@ def run_event_analysis_pipeline(
                 )
                 if debug:
                     console.print(f"[green]✅ 平台采集完成[/green] {platform} rows={collected_rows}")
+                _stage(
+                    collect_step_id,
+                    f"平台采集完成 {platform}",
+                    f"rows={collected_rows}",
+                    phase="data_collect",
+                    status="completed",
+                    payload={
+                        "platform": platform,
+                        "rows": int(collected_rows),
+                        "save_path": resolved_collect_path,
+                    },
+                )
                 return True, ""
             last_collect_error = collect_error or last_collect_error or "data_collect failed"
             _append_ndjson_log(
@@ -3340,6 +3420,19 @@ def run_event_analysis_pipeline(
                 location="workflow/event_analysis_pipeline.py:after_data_num",
                 message="data_num 耗时（多平台分配）",
                 data={"elapsed_sec": data_num_elapsed, "platform_allocation": matrix_json.get("platform_allocation")},
+            )
+            _stage(
+                "step3:data_num",
+                "data_num 完成",
+                f"platform_allocation={matrix_json.get('platform_allocation') or {}}",
+                phase="data_num",
+                status="completed",
+                payload={
+                    "platforms": selected_platforms,
+                    "elapsed_sec": data_num_elapsed,
+                    "platform_allocation": matrix_json.get("platform_allocation"),
+                    "total_count": matrix_json.get("total_count"),
+                },
             )
             qs = str(matrix_json.get("query_string") or words_for_num[0])
             pa_raw = matrix_json.get("platform_allocation")
@@ -3409,6 +3502,19 @@ def run_event_analysis_pipeline(
                 message="data_num 耗时",
                 data={"elapsed_sec": data_num_elapsed, "search_words_count": len(tool_search_words), "platform": platform},
             )
+            _stage(
+                "step3:data_num",
+                "data_num 完成",
+                f"platform={platform} search_words={len(tool_search_words)}",
+                phase="data_num",
+                status="completed",
+                payload={
+                    "platform": platform,
+                    "elapsed_sec": data_num_elapsed,
+                    "search_words_count": len(tool_search_words),
+                    "total_count": matrix_json.get("total_count"),
+                },
+            )
             search_matrix_raw = matrix_json.get("search_matrix")
             search_matrix = _sanitize_search_matrix(search_matrix_raw, return_count)
             time_range_used = str(matrix_json.get("time_range") or time_range_base)
@@ -3433,9 +3539,47 @@ def run_event_analysis_pipeline(
                 console.print(
                     f"[green]✅ 多平台采集合并完成[/green] platforms={selected_platforms} save_path={save_path}"
                 )
+            _stage(
+                "step4:data_collect:merge",
+                "多平台采集合并完成",
+                f"platforms={selected_platforms} save_path={save_path}",
+                phase="data_collect",
+                status="completed",
+                payload={"platforms": selected_platforms, "save_path": save_path},
+            )
         else:
             # 全平台均失败：最后再尝试历史回退（与单平台一致的兜底）
-            if not _allow_history_fallback():
+            history_fallback_enabled = _allow_history_fallback()
+            if not history_fallback_enabled:
+                if _is_no_data_collect_error(last_collect_error):
+                    final_msg = _build_no_data_user_message(
+                        platforms=selected_platforms,
+                        last_error=last_collect_error,
+                        history_fallback_enabled=False,
+                    )
+                    _append_ndjson_log(
+                        run_id="event_analysis_no_data",
+                        hypothesis_id="H47_data_collect_no_data_user_facing",
+                        location="workflow/event_analysis_pipeline.py:no_data_early_finish",
+                        message="采集无数据，已直接返回用户提示",
+                        data={
+                            "task_id": task_id,
+                            "platforms": selected_platforms,
+                            "last_error": str(last_collect_error)[:400],
+                        },
+                    )
+                    runtime_harness.finalize()
+                    _step("done", "工作流完成", final_msg, payload={"no_data": True, "platforms": selected_platforms})
+                    session_manager.add_message(task_id, "assistant", final_msg)
+                    console.print()
+                    console.print(f"[yellow]⚠️ {final_msg}[/yellow]")
+                    try:
+                        if enable_progress and progress is not None and progress_started:
+                            _progress_advance()
+                            progress.stop()
+                    except Exception:
+                        pass
+                    return final_msg
                 raise ValueError(
                     f"所有平台 data_collect 失败：{selected_platforms}；last_error={last_collect_error[:200]}；"
                     "且已关闭历史回退（SONA_ALLOW_HISTORY_FALLBACK=false）。"
@@ -3455,9 +3599,47 @@ def run_event_analysis_pipeline(
                 if debug:
                     console.print(f"[yellow]⚠️ 已回退使用历史数据[/yellow] save_path={save_path}")
             else:
+                if _is_no_data_collect_error(last_collect_error):
+                    final_msg = _build_no_data_user_message(
+                        platforms=selected_platforms,
+                        last_error=last_collect_error,
+                        history_fallback_enabled=True,
+                    )
+                    _append_ndjson_log(
+                        run_id="event_analysis_no_data",
+                        hypothesis_id="H47_data_collect_no_data_user_facing",
+                        location="workflow/event_analysis_pipeline.py:no_data_after_history_miss",
+                        message="采集无数据且无历史可回退，已直接返回用户提示",
+                        data={
+                            "task_id": task_id,
+                            "platforms": selected_platforms,
+                            "last_error": str(last_collect_error)[:400],
+                        },
+                    )
+                    runtime_harness.finalize()
+                    _step("done", "工作流完成", final_msg, payload={"no_data": True, "platforms": selected_platforms})
+                    session_manager.add_message(task_id, "assistant", final_msg)
+                    console.print()
+                    console.print(f"[yellow]⚠️ {final_msg}[/yellow]")
+                    try:
+                        if enable_progress and progress is not None and progress_started:
+                            _progress_advance()
+                            progress.stop()
+                    except Exception:
+                        pass
+                    return final_msg
                 raise ValueError(f"所有平台 data_collect 失败，且无可复用历史数据。last_error={last_collect_error}")
         if debug and save_path:
             console.print(f"[green]✅ 数据采集完成[/green] save_path={save_path}")
+        if save_path:
+            _stage(
+                "step4:data_collect:done",
+                "数据采集完成",
+                f"save_path={save_path}",
+                phase="data_collect",
+                status="completed",
+                payload={"save_path": save_path},
+            )
 
         # 若样本过小，给出明确告警（避免把低样本直接当结论）
         min_samples = max(20, min(_safe_int(os.environ.get("SONA_MIN_SAMPLE_WARN", "80"), 80), 1000))
@@ -3620,16 +3802,26 @@ def run_event_analysis_pipeline(
     if debug:
         _step("step5", "Step5: dataset_summary")
     _progress_step("Step5: dataset_summary")
+    _stage("step5:dataset_summary", "Step5: dataset_summary", phase="dataset_summary")
 
     ds_json = _invoke_tool_to_json(dataset_summary, {"save_path": save_path})
     dataset_summary_path = str(ds_json.get("result_file_path") or "")
     if not dataset_summary_path or not Path(dataset_summary_path).exists():
         raise ValueError("dataset_summary 未返回有效 result_file_path")
+    _stage(
+        "step5:dataset_summary",
+        "dataset_summary 完成",
+        f"result_file_path={dataset_summary_path}",
+        phase="dataset_summary",
+        status="completed",
+        payload={"result_file_path": dataset_summary_path},
+    )
 
     # ============ 6) 统计与阶段分析 ============
     # ============ 6.1) keyword_stats（可选，失败可跳过） ============
     if debug:
         _step("step6.1", "Step6.1: keyword_stats (optional)")
+    _stage("step6.1:keyword_stats", "Step6.1: keyword_stats (optional)", phase="stats")
 
     try:
         keyword_json = _invoke_tool_to_json(
@@ -3643,6 +3835,15 @@ def run_event_analysis_pipeline(
         keyword_stats_path = str(keyword_json.get("result_file_path") or "")
         if debug and keyword_stats_path:
             console.print(f"[green]✅ 关键词统计完成[/green] result_file_path={keyword_stats_path}")
+        if keyword_stats_path:
+            _stage(
+                "step6.1:keyword_stats",
+                "关键词统计完成",
+                f"result_file_path={keyword_stats_path}",
+                phase="stats",
+                status="completed",
+                payload={"result_file_path": keyword_stats_path},
+            )
         top_keywords = _load_top_keywords(keyword_stats_path, max_items=80)
         relevance = _topic_relevance_metrics(
             user_query=user_query,
@@ -3746,6 +3947,7 @@ def run_event_analysis_pipeline(
     # ============ 6.2) region_stats（可选，失败可跳过） ============
     if debug:
         _step("step6.2", "Step6.2: region_stats (optional)")
+    _stage("step6.2:region_stats", "Step6.2: region_stats (optional)", phase="stats")
 
     try:
         region_json = _invoke_tool_to_json(
@@ -3758,6 +3960,15 @@ def run_event_analysis_pipeline(
         region_stats_path = str(region_json.get("result_file_path") or "")
         if debug and region_stats_path:
             console.print(f"[green]✅ 地域统计完成[/green] result_file_path={region_stats_path}")
+        if region_stats_path:
+            _stage(
+                "step6.2:region_stats",
+                "地域统计完成",
+                f"result_file_path={region_stats_path}",
+                phase="stats",
+                status="completed",
+                payload={"result_file_path": region_stats_path},
+            )
     except Exception as e:
         if debug:
             console.print("[yellow]⚠️ region_stats 执行失败，已跳过，不影响后续流程[/yellow]")
@@ -3772,6 +3983,7 @@ def run_event_analysis_pipeline(
     # ============ 6.3) author_stats（可选，失败可跳过） ============
     if debug:
         _step("step6.3", "Step6.3: author_stats (optional)")
+    _stage("step6.3:author_stats", "Step6.3: author_stats (optional)", phase="stats")
 
     try:
         author_json = _invoke_tool_to_json(
@@ -3784,6 +3996,15 @@ def run_event_analysis_pipeline(
         author_stats_path = str(author_json.get("result_file_path") or "")
         if debug and author_stats_path:
             console.print(f"[green]✅ 作者统计完成[/green] result_file_path={author_stats_path}")
+        if author_stats_path:
+            _stage(
+                "step6.3:author_stats",
+                "作者统计完成",
+                f"result_file_path={author_stats_path}",
+                phase="stats",
+                status="completed",
+                payload={"result_file_path": author_stats_path},
+            )
     except Exception as e:
         if debug:
             console.print("[yellow]⚠️ author_stats 执行失败，已跳过，不影响后续流程[/yellow]")
@@ -3803,6 +4024,8 @@ def run_event_analysis_pipeline(
         _step("step7", f"Step7: analysis_sentiment ({'on' if sentiment_enabled else 'off'})")
     _progress_advance()
     _progress_step("Step6.4-7: timeline + sentiment")
+    _stage("step6.4:analysis_timeline", f"Step6.4: analysis_timeline ({'on' if timeline_enabled else 'off'})", phase="analysis")
+    _stage("step7:analysis_sentiment", f"Step7: analysis_sentiment ({'on' if sentiment_enabled else 'off'})", phase="analysis")
 
     analysis_start = time.time()
     single_timing: Dict[str, float] = {"timeline_sec": 0.0, "sentiment_sec": 0.0}
@@ -3915,6 +4138,22 @@ def run_event_analysis_pipeline(
 
     timeline_path = _ensure_analysis_result_file(process_dir=process_dir, kind="timeline", result_json=timeline_json)
     sentiment_path = _ensure_analysis_result_file(process_dir=process_dir, kind="sentiment", result_json=sentiment_json)
+    _stage(
+        "step6.4:analysis_timeline",
+        "analysis_timeline 完成",
+        f"result_file_path={timeline_path}",
+        phase="analysis",
+        status="completed",
+        payload={"result_file_path": timeline_path, "reused": reused_flags["timeline"]},
+    )
+    _stage(
+        "step7:analysis_sentiment",
+        "analysis_sentiment 完成",
+        f"result_file_path={sentiment_path}",
+        phase="analysis",
+        status="completed",
+        payload={"result_file_path": sentiment_path, "reused": reused_flags["sentiment"]},
+    )
     # #region debug_log_H25_analysis_result_paths
     _append_ndjson_log(
         run_id="event_analysis_parallel_analysis",
@@ -3948,6 +4187,7 @@ def run_event_analysis_pipeline(
     # ============ 6.5) channel（平台占比，生成饼图数据） ============
     if debug:
         _step("step6.5", "Step6.5: channel_distribution (optional)")
+    _stage("step6.5:channel_distribution", "Step6.5: channel_distribution (optional)", phase="stats")
     try:
         calc_source = ""
         channel_counts: Dict[str, int] = {}
@@ -3989,6 +4229,14 @@ def run_event_analysis_pipeline(
             "channel_distribution",
             {"total_count": total_count, "channels": channel_items[:8], "path": str(channel_path)},
         )
+        _stage(
+            "step6.5:channel_distribution",
+            "渠道占比完成",
+            f"result_file_path={channel_path}",
+            phase="stats",
+            status="completed",
+            payload={"result_file_path": str(channel_path), "total_count": total_count},
+        )
     except Exception as e:
         _append_ndjson_log(
             run_id="event_analysis_channel",
@@ -4004,6 +4252,7 @@ def run_event_analysis_pipeline(
     # ============ 6.6) volume_stats（可选，失败可跳过） ============
     if debug:
         _step("step6.6", "Step6.6: volume_stats (optional)")
+    _stage("step6.6:volume_stats", "Step6.6: volume_stats (optional)", phase="stats")
 
     try:
         volume_json = _invoke_tool_to_json(
@@ -4015,6 +4264,15 @@ def run_event_analysis_pipeline(
         volume_stats_path = str(volume_json.get("result_file_path") or "")
         if debug and volume_stats_path:
             console.print(f"[green]✅ 声量统计完成[/green] result_file_path={volume_stats_path}")
+        if volume_stats_path:
+            _stage(
+                "step6.6:volume_stats",
+                "声量统计完成",
+                f"result_file_path={volume_stats_path}",
+                phase="stats",
+                status="completed",
+                payload={"result_file_path": volume_stats_path},
+            )
     except Exception as e:
         if debug:
             console.print("[yellow]⚠️ volume_stats 执行失败，已跳过，不影响后续流程[/yellow]")
@@ -4029,6 +4287,7 @@ def run_event_analysis_pipeline(
     # ============ 6.7) user_portrait（可选，失败可跳过） ============
     if debug:
         _step("step6.7", "Step6.7: user_portrait (optional)")
+    _stage("step6.7:user_portrait", "Step6.7: user_portrait (optional)", phase="stats")
     try:
         portrait_json = _invoke_tool_to_json(
             user_portrait,
@@ -4040,6 +4299,15 @@ def run_event_analysis_pipeline(
         portrait_path = str(portrait_json.get("result_file_path") or "")
         if debug and portrait_path:
             console.print(f"[green]✅ 用户画像完成[/green] result_file_path={portrait_path}")
+        if portrait_path:
+            _stage(
+                "step6.7:user_portrait",
+                "用户画像完成",
+                f"result_file_path={portrait_path}",
+                phase="stats",
+                status="completed",
+                payload={"result_file_path": portrait_path},
+            )
     except Exception as e:
         if debug:
             console.print("[yellow]⚠️ user_portrait 执行失败，已跳过，不影响后续流程[/yellow]")
@@ -4053,6 +4321,7 @@ def run_event_analysis_pipeline(
 
     if debug:
         _step("step8", "Step8: generate_interpretation")
+    _stage("step8:generate_interpretation", "Step8: generate_interpretation", phase="interpretation")
 
     interp_json = _invoke_tool_to_json(
         generate_interpretation,
@@ -4100,10 +4369,19 @@ def run_event_analysis_pipeline(
             data={"fallback_path": interpretation_path, "tool_error": interp_json.get("error", "")},
         )
         # #endregion debug_log_H30_interpretation_fallback
+    _stage(
+        "step8:generate_interpretation",
+        "generate_interpretation 完成",
+        f"result_file_path={interpretation_path}",
+        phase="interpretation",
+        status="completed",
+        payload={"result_file_path": interpretation_path},
+    )
 
     # ============ 9) 微博智搜预览 + 用户协同研判输入（可选） ============
     if debug:
         _step("step9", "Step9: weibo_aisearch + user_judgement")
+    _stage("step9:user_judgement", "Step9: weibo_aisearch + user_judgement", phase="judgement")
     weibo_ref_json: Dict[str, Any] = {}
     weibo_ref_path = process_dir / "weibo_aisearch_reference.json"
     enable_weibo_ref = str(os.environ.get("SONA_REFERENCE_ENABLE_WEIBO_AISEARCH", "true")).strip().lower() in (
@@ -4146,6 +4424,13 @@ def run_event_analysis_pipeline(
 
     user_judgement_text = str(os.environ.get("SONA_EVENT_USER_JUDGEMENT", "") or "").strip()
     if collab_enabled and not user_judgement_text:
+        _stage(
+            "step9:user_judgement",
+            "等待主研判输入",
+            "45s 无响应则跳过",
+            phase="judgement",
+            payload={"timeout_sec": max(collab_timeout_sec, 25)},
+        )
         user_judgement_text = _prompt_text_timeout(
             "可选：主研判输入（影响报告核心叙事/优先级；45s 无响应跳过）",
             timeout_sec=max(collab_timeout_sec, 25),
@@ -4186,6 +4471,14 @@ def run_event_analysis_pipeline(
             "focus_keywords": user_focus_keywords[:6],
             "path": str(user_judgement_path),
         },
+    )
+    _stage(
+        "step9:user_judgement",
+        "主研判输入已处理",
+        f"has_input={bool(user_judgement_text)} path={user_judgement_path}",
+        phase="judgement",
+        status="completed",
+        payload={"has_input": bool(user_judgement_text), "result_file_path": str(user_judgement_path)},
     )
 
     # ============ 10) 事件参考资料与知识增强（10.1~10.4） ============

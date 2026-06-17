@@ -287,11 +287,15 @@ def _stream_mode_flow(
         if result_holder["error"] is not None:
             raise result_holder["error"]
         file_url_or_path = result_holder["value"]
-        final_text = f"已完成舆情事件分析工作流。报告：{file_url_or_path or ''}"
+        result_text = str(file_url_or_path or "").strip()
+        if result_text.startswith("已完成舆情事件分析工作流。报告：") or result_text.startswith("这次在 "):
+            final_text = result_text
+        else:
+            final_text = f"已完成舆情事件分析工作流。报告：{result_text}"
         yield {
             "type": "tool_result",
             "tool_name": "full_report_mode_node",
-            "result": str(file_url_or_path or ""),
+            "result": result_text,
             "run_id": f"mode_full_{task_id or 'na'}",
         }
         yield {
