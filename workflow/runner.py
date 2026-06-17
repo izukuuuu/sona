@@ -26,6 +26,7 @@ class EventAnalysisRunRequest:
     force_fresh_start: Optional[bool] = None
     report_length: Optional[str] = None
     progress_callback: Optional[Any] = None
+    skip_session_user_message: bool = False
 
 
 def _env_flag(name: str, default: str) -> str:
@@ -62,6 +63,7 @@ def _execute_pipeline_stage(request: EventAnalysisRunRequest) -> str:
         force_fresh_start=request.force_fresh_start,
         report_length=request.report_length,
         progress_callback=request.progress_callback,
+        skip_session_user_message=request.skip_session_user_message,
     )
 
 
@@ -83,6 +85,7 @@ def run_event_analysis_workflow(
     force_fresh_start: Optional[bool] = None,
     report_length: Optional[str] = None,
     progress_callback: Optional[Any] = None,
+    skip_session_user_message: bool = False,
 ) -> str:
     """Backward-compatible workflow entrypoint backed by runner orchestration."""
     request = EventAnalysisRunRequest(
@@ -96,6 +99,7 @@ def run_event_analysis_workflow(
         force_fresh_start=force_fresh_start,
         report_length=report_length,
         progress_callback=progress_callback,
+        skip_session_user_message=skip_session_user_message,
     )
     return orchestrate_event_analysis(request)
 

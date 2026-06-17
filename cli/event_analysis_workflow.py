@@ -24,6 +24,7 @@ def run_event_analysis_workflow(
     force_fresh_start: Optional[bool] = None,
     report_length: Optional[str] = None,
     progress_callback: Optional[Any] = None,
+    skip_session_user_message: bool = False,
 ) -> str:
     """Backward-compatible entry: delegates to workflow runner / pipeline."""
     return _dispatch_pipeline(
@@ -37,6 +38,7 @@ def run_event_analysis_workflow(
         force_fresh_start=force_fresh_start,
         report_length=report_length,
         progress_callback=progress_callback,
+        skip_session_user_message=skip_session_user_message,
     )
 
 
@@ -51,6 +53,7 @@ def run_full_report_mode(
     force_fresh_start: Optional[bool] = None,
     report_length: Optional[str] = None,
     progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    skip_session_user_message: bool = False,
 ) -> str:
     """完整报告模式（供 Agent full_report 等复用）。"""
     return run_event_analysis_workflow(
@@ -63,6 +66,7 @@ def run_full_report_mode(
         force_fresh_start=force_fresh_start,
         report_length=report_length,
         progress_callback=progress_callback,
+        skip_session_user_message=skip_session_user_message,
     )
 
 
