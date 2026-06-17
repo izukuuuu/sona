@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { App, Button, Dropdown, Segmented, Tag, Tooltip } from 'antd';
+import { App, Button, Dropdown, Form, Input, InputNumber, Modal, Segmented, Tag, Tooltip } from 'antd';
 import { LoadingDots, TokenTag } from '@lobehub/ui/chat';
 import type { ChatMessage as LobeChatMessage, OnActionsClick, OnMessageChange } from '@lobehub/ui/chat';
 import { SonaChatComposer } from '@/features/workspace/SonaChatComposer';
@@ -51,6 +51,11 @@ import {
   sessionsAreDuplicates,
 } from '@/features/workspace/sessionIdentity';
 import { hasReportRefs } from '@/features/workspace/reportRefs';
+import {
+  buildCollectPlanPatch,
+  extractCollectPlan,
+  type CollectPlanDraft,
+} from '@/features/workspace/collectPlan';
 
 type UtilityTab = 'tasks' | 'profile' | 'models' | 'tools' | 'monitor';
 type SettingsTab = 'skills' | 'memory';
@@ -61,6 +66,13 @@ type ActivityEntry = {
   id: string;
   label: string;
   detail?: string;
+};
+
+type ApprovalEditorState = {
+  open: boolean;
+  step: AgentStep | null;
+  draft: CollectPlanDraft | null;
+  submitting: boolean;
 };
 
 function shortId(id?: string) {
@@ -164,6 +176,13 @@ export function SonaWorkspace() {
   const [settingsMode, setSettingsMode] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('skills');
   const [activeRun, setActiveRun] = useState<{ runId: string; sessionId: string } | null>(null);
+  const [approvalEditor, setApprovalEditor] = useState<ApprovalEditorState>({
+    open: false,
+    step: null,
+    draft: null,
+    submitting: false,
+  });
+  const [approvalForm] = Form.useForm<CollectPlanDraft>();
 
   const chatSession = useChatSession({
     setHomeMode,
@@ -259,26 +278,68 @@ export function SonaWorkspace() {
       messageApi.error('找不到等待确认的 Agent run');
       return;
     }
-    let patch: Record<string, unknown> = {};
     if (action === 'edit') {
-      const initial = JSON.stringify(step.payload || {}, null, 2);
-      const raw = window.prompt('修改采集方案 JSON，确认后继续执行', initial);
-      if (raw == null) return;
-      try {
-        patch = JSON.parse(raw) as Record<string, unknown>;
-      } catch {
-        messageApi.error('JSON 格式不正确');
+      const draft = extractCollectPlan(step.payload, step.content);
+      if (!draft) {
+        messageApi.error('当前采集方案无法解析为可编辑表单');
         return;
       }
+      approvalForm.setFieldsValue(draft);
+      setApprovalEditor({
+        open: true,
+        step,
+        draft,
+        submitting: false,
+      });
+      return;
     }
     try {
-      await sonaApi.approveAgentRun(sessionId, runId, action, patch);
+      await sonaApi.approveAgentRun(sessionId, runId, action, {});
       setRouteStatus(action === 'abort' ? '终止中' : '继续执行');
       pushActivity(action === 'edit' ? '采集方案已修改' : action === 'abort' ? '已请求终止' : '采集方案已确认');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setApiError(message);
       messageApi.error(message);
+    }
+  }
+
+  function closeApprovalEditor() {
+    setApprovalEditor({
+      open: false,
+      step: null,
+      draft: null,
+      submitting: false,
+    });
+    approvalForm.resetFields();
+  }
+
+  async function submitApprovalEdit() {
+    const step = approvalEditor.step;
+    const runId = step?.runId || activeRun?.runId;
+    const sessionId = currentSessionId || activeRun?.sessionId;
+    if (!step || !runId || !sessionId) {
+      messageApi.error('找不到等待确认的 Agent run');
+      return;
+    }
+    try {
+      const values = await approvalForm.validateFields();
+      const patch = buildCollectPlanPatch({
+        ...values,
+        platforms: values.platforms,
+        searchWords_preview: values.searchWords_preview,
+      });
+      setApprovalEditor((prev) => ({ ...prev, submitting: true }));
+      await sonaApi.approveAgentRun(sessionId, runId, 'edit', patch);
+      closeApprovalEditor();
+      setRouteStatus('继续执行');
+      pushActivity('采集方案已修改');
+    } catch (error) {
+      if (error && typeof error === 'object' && 'errorFields' in error) return;
+      const message = error instanceof Error ? error.message : String(error);
+      setApiError(message);
+      messageApi.error(message);
+      setApprovalEditor((prev) => ({ ...prev, submitting: false }));
     }
   }
 
@@ -1005,6 +1066,60 @@ export function SonaWorkspace() {
                     <LoadingDots />
                   </div>
                 ) : null}
+                <Modal
+                  cancelText="取消"
+                  confirmLoading={approvalEditor.submitting}
+                  okText="提交修改并继续"
+                  onCancel={closeApprovalEditor}
+                  onOk={submitApprovalEdit}
+                  open={approvalEditor.open}
+                  title={approvalEditor.step?.title || '修改采集方案'}
+                  width={720}
+                >
+                  <Form form={approvalForm} layout="vertical">
+                    <Form.Item label="关键词组合模式" name="keyword_combination_mode" rules={[{ required: true, message: '请填写关键词组合模式' }]}>
+                      <Input />
+                    </Form.Item>
+                    <Form.Item label="布尔策略" name="boolean_strategy" rules={[{ required: true, message: '请填写布尔策略' }]}>
+                      <Input />
+                    </Form.Item>
+                    <Form.Item label="关键词连接符" name="keywords_join_with" rules={[{ required: true, message: '请填写连接符' }]}>
+                      <Input />
+                    </Form.Item>
+                    <Form.Item
+                      getValueFromEvent={(event) => String(event?.target?.value || '').split(/[;；,\n]/).map((item) => item.trim()).filter(Boolean)}
+                      getValueProps={(value) => ({ value: Array.isArray(value) ? value.join('；') : '' })}
+                      label="平台"
+                      name="platforms"
+                      rules={[{ required: true, message: '请至少填写一个平台' }]}
+                    >
+                      <Input placeholder="微博；微信" />
+                    </Form.Item>
+                    <Form.Item label="时间范围" name="time_range" rules={[{ required: true, message: '请填写时间范围' }]}>
+                      <Input placeholder="2026-05-17 23:59:59;2026-06-16 23:59:59" />
+                    </Form.Item>
+                    <Form.Item label="返回条数" name="return_count" rules={[{ required: true, message: '请填写返回条数' }]}>
+                      <InputNumber max={10000} min={1} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item label="data_num_workers" name="data_num_workers" rules={[{ required: true, message: '请填写 data_num_workers' }]}>
+                      <InputNumber max={8} min={1} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item label="data_collect_workers" name="data_collect_workers" rules={[{ required: true, message: '请填写 data_collect_workers' }]}>
+                      <InputNumber max={8} min={1} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item label="analysis_workers" name="analysis_workers" rules={[{ required: true, message: '请填写 analysis_workers' }]}>
+                      <InputNumber max={8} min={1} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item
+                      getValueFromEvent={(event) => String(event?.target?.value || '').split(/[;；,\n]/).map((item) => item.trim()).filter(Boolean)}
+                      getValueProps={(value) => ({ value: Array.isArray(value) ? value.join('；') : '' })}
+                      label="检索词预览"
+                      name="searchWords_preview"
+                    >
+                      <Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} placeholder="Claude；Fable；相关舆情" />
+                    </Form.Item>
+                  </Form>
+                </Modal>
               </div>
             </div>
 

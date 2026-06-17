@@ -152,6 +152,10 @@ function settleApprovals(
   });
 }
 
+function approvalPlaceholder(title?: string) {
+  return `${title || '建议搜索采集方案（等待确认）'}\n\n请在下方审批卡片中确认、修改或终止。`;
+}
+
 function replaceBlocks(target: TurnBlock[], source: TurnBlock[]) {
   target.splice(0, target.length, ...source);
 }
@@ -368,7 +372,7 @@ function consolidateRun(blocks: TurnBlock[]): { answer: string; steps: AgentStep
       continue;
     }
     if (block.type === 'approval') {
-      textParts.push(`**${block.title || '等待确认'}**\n\n${block.prompt}`);
+      textParts.push(approvalPlaceholder(block.title));
       pushStep({
         kind: 'approval',
         title: block.title || '待确认',

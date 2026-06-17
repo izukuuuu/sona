@@ -80,7 +80,7 @@ describe('applyStreamEvent message', () => {
     const live = blocksFromStream(blocks);
     expect(blocks.some((b) => b.type === 'approval')).toBe(true);
     expect(live.answer).toContain('建议搜索采集方案');
-    expect(live.answer).toContain('"platforms"');
+    expect(live.answer).toContain('审批卡片');
   });
 
   it('restores persisted workflow audit messages into approval steps', () => {
@@ -98,7 +98,7 @@ describe('applyStreamEvent message', () => {
     ]);
     const assistant = turns.find((turn) => turn.kind === 'assistant');
     expect(assistant?.steps.some((step) => step.kind === 'approval')).toBe(true);
-    expect(assistant?.answer).toContain('建议搜索采集方案');
+    expect(assistant?.answer).toContain('审批卡片');
   });
 
   it('appends tool_calls from message event', () => {

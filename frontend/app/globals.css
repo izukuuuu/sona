@@ -723,6 +723,35 @@ textarea {
   white-space: pre-wrap;
 }
 
+.sonaApprovalSummary {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.sonaApprovalSummaryRow {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.sonaApprovalSummaryRow dt {
+  color: #9a5b12;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sonaApprovalSummaryRow dd {
+  margin: 0;
+  color: #2f2f36;
+  font-size: 12px;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
 .sonaApprovalActions {
   display: flex;
   flex-wrap: wrap;

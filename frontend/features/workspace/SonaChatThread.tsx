@@ -14,6 +14,7 @@ import { Activity, Check, PencilLine, X } from 'lucide-react';
 import { SonaChatAnswer } from '@/features/workspace/SonaChatAnswer';
 import { SONA_ASSISTANT_TITLE } from '@/features/workspace/chatMessageUi';
 import type { AgentApprovalAction } from '@/types/sona';
+import { extractCollectPlan, formatCollectPlanEntries } from '@/features/workspace/collectPlan';
 
 function formatChatTime(value: number) {
   const date = new Date(value);
@@ -104,9 +105,22 @@ function ApprovalPanel({
       step.status === 'rejected' ? '已终止' :
         step.status === 'recorded' ? '已记录' :
           '等待处理';
+  const collectPlan = extractCollectPlan(step.payload, step.content);
+  const entries = collectPlan ? formatCollectPlanEntries(collectPlan) : [];
   const body = (
     <>
-      <pre>{step.content}</pre>
+      {entries.length ? (
+        <dl className="sonaApprovalSummary">
+          {entries.map((entry) => (
+            <div className="sonaApprovalSummaryRow" key={entry.label}>
+              <dt>{entry.label}</dt>
+              <dd>{entry.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <pre>{step.content}</pre>
+      )}
       <div className="sonaApprovalActions">
         <Button disabled={!pending || !onApproval} icon={<Check size={14} />} onClick={() => onApproval?.(step, 'accept')} size="small">采用</Button>
         <Button disabled={!pending || !onApproval} icon={<PencilLine size={14} />} onClick={() => onApproval?.(step, 'edit')} size="small">请求修改</Button>
